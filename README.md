@@ -1,67 +1,37 @@
-# RePay WhatsApp shopping POC
+# RePay POC
 
-An ASP.NET Core webhook for a WhatsApp shopping assistant. It verifies Meta callbacks, validates the signed payload, asks an OpenAI model to search and present options, sends the result to WhatsApp, and accepts a choice. A separate browser-agent service can add that choice to a cart and prepare checkout. It is explicitly sent `stopBeforePayment: true`; this project has no payment endpoint, payment tool, or call to `pay()`.
+Let your agents prepare purchases on your behalf. Payment credentials remain private, and every purchase stays subject to your approval.
 
-## Flow
+RePay is an ASP.NET Core proof of concept for agent-assisted commerce. It accepts a customer request through a configured channel, searches for products, presents choices, and lets a guarded browser service prepare a basket and checkout summary. It always stops before payment: this repository contains no payment endpoint, credential handling, or pay() operation.
 
-`WhatsApp → Meta webhook → OpenAI web search → numbered options → user replies 1–3 → browser agent prepares checkout → WhatsApp summary`
+## Product flow
 
-Keep this POC separate from the current RePay backend. Its `MetaWhatsAppClient`, `OpenAiAgentClient`, and `SafeBrowserAgent` classes are intended as the integration boundary when moving it into the main solution.
+Customer request → product search → numbered choices → customer selection → guarded checkout preparation → approval summary
+
+The agent may discover products and prepare a checkout, but it cannot submit a purchase or access card data, passwords, or one-time codes.
+
+## Architecture
+
+- **Channel adapter** receives signed customer messages and sends responses.
+- **Agent provider** searches and recommends products. The primary provider is Groq through its OpenAI-compatible API.
+- **Browser agent** prepares a cart and checkout summary through one guarded operation.
 
 ## Configure secrets
 
-Do not add secrets to `appsettings.json`. Copy the values from `.env.example` into your deployment secret store or export them locally. ASP.NET's double-underscore configuration mapping is used:
+Keep secrets outside source control:
 
 ```bash
-export RePay__WhatsAppVerifyToken='a-long-random-value'
-export RePay__MetaAppSecret='Meta app secret'
-export RePay__MetaAccessToken='system-user access token'
-export RePay__MetaPhoneNumberId='phone number id'
-export RePay__OpenAiApiKey='OpenAI API key'
-export RePay__OpenAiModel='gpt-5-mini'
+export RePay__GroqApiKey='Groq API key'
+export RePay__GroqModel='groq/compound-mini'
 export RePay__BrowserAgentBaseUrl='https://internal-browser-agent.example'
 ```
 
-`BROWSER_AGENT_BASE_URL` is represented by `RePay__BrowserAgentBaseUrl` above. Its service must accept `POST /prepare-checkout` and enforce `stopBeforePayment`. Use an isolated browser profile and allow-listed merchant domains; never give it card data or a payment action.
+The browser service must accept `POST /prepare-checkout` with `stopBeforePayment: true`. It must use an isolated profile, restrict itself to approved merchant domains, reject every payment action, and never collect payment credentials.
 
-## Run
+## Agent providers
 
-```bash
-dotnet run --project RePay.WhatsAppPoc
-```
-
-Expose the local app through an HTTPS tunnel, for example using your approved tunnel provider. The public callback is:
-
-`https://YOUR-DOMAIN/webhooks/whatsapp`
-
-Check `https://YOUR-DOMAIN/health` before configuring Meta.
-
-## Browser-agent contract
-
-The browser agent is deliberately a separate internal service. Configure its base address in `RePay__BrowserAgentBaseUrl`; RePay then calls:
-
-```http
-POST /prepare-checkout
-Content-Type: application/json
-
-{ "choice": "1", "stopBeforePayment": true }
-```
-
-The service must use an isolated browser profile, open only your approved merchant domains, add the chosen item to the basket, and return a short checkout summary. It must reject every payment action and never collect card data, passwords, or OTPs. This is the boundary that lets the current POC connect to the future RePay browser service without adding purchase authority to the WhatsApp backend.
-
-## OpenAI API key
-
-Create a project-scoped key in the [OpenAI API keys page](https://platform.openai.com/api-keys): choose the RePay project (or create one), select **Create new secret key**, and save it immediately. Use a project key with a spend limit rather than a personal shared key. Set it only in the runtime secret store as `RePay__OpenAiApiKey`; never paste it into source code or commit it. OpenAI documents project key management in its [API project guide](https://help.openai.com/en/articles/9186755).
-
-## Meta configuration
-
-1. In Meta for Developers, open the app's **WhatsApp > Configuration** page and edit the webhook.
-2. Enter the public callback URL above and the exact same value used for `RePay__WhatsAppVerifyToken` as **Verify token**. Meta sends `hub.challenge`; the app returns it only when the token matches.
-3. Subscribe to the `messages` webhook field and save.
-4. Send a WhatsApp message to the test number. Meta signs every POST using `X-Hub-Signature-256`; the app rejects messages whose HMAC does not match `RePay__MetaAppSecret`.
-
-The OpenAI Responses API supports a built-in web-search tool and custom function tools. This POC uses web search for discovery and reserves the guarded checkout operation for the browser service. See the official [OpenAI web-search guide](https://developers.openai.com/api/docs/guides/tools-web-search) and [function-calling guide](https://developers.openai.com/api/docs/guides/function-calling).
+The current implementation uses Groq. The provider boundary can later use Gemini, OpenRouter, or Ollama with an open model on your own server.
 
 ## Production follow-up
 
-Replace `ConversationStore` with a database keyed by WhatsApp message ID, store merchant and cart state, respond to Meta quickly by queueing work, validate tenant authorization, and keep payment initiation in a separately reviewed RePay workflow.
+Use a durable queue, persist conversation and approval state, add idempotency, and require an explicit user approval outside the agent before every purchase.
