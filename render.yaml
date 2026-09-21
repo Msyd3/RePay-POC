@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: repay-poc
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    envVars:
+      - key: RePay__WhatsAppVerifyToken
+        sync: false
+      - key: RePay__MetaAppSecret
+        sync: false
+      - key: RePay__MetaAccessToken
+        sync: false
+      - key: RePay__MetaPhoneNumberId
+        sync: false
+      - key: RePay__GroqApiKey
+        sync: false
+      - key: RePay__GroqModel
+        value: groq/compound-mini
+      - key: RePay__GeminiApiKey
+        sync: false
+      - key: RePay__GeminiModel
+        value: gemini-2.5-flash
+      - key: RePay__BrowserAgentBaseUrl
+        sync: false

@@ -1,9 +1,8 @@
 bin/
 obj/
 App_Data/
+.git/
 .env
 .env.*
 !.env.example
-appsettings.Development.json
-*.user
-*.suo
+work/
