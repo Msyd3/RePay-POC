@@ -10,6 +10,7 @@ public sealed record ChatTurn(string Role, string Text);
 public sealed class ConversationState
 {
     public string? Name { get; set; }
+    public bool AwaitingNameChange { get; set; }
     public bool Welcomed { get; set; }
     public List<ChatTurn> Turns { get; set; } = [];
     public List<string> ProcessedMessages { get; set; } = [];

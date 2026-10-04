@@ -24,19 +24,45 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
                 reply = ServiceConversation.Welcome;
                 state.Welcomed = true;
             }
+            else if (state.AwaitingNameChange && Regex.IsMatch(message.Text.Trim(), @"^(إلغاء|الغاء|خلاص|لا تغيره|لا تغيّر اسمي)$"))
+            {
+                state.AwaitingNameChange = false;
+                reply = "تمام، اسمك يبقى مثل ما هو.";
+            }
+            else if (ServiceConversation.IsNameChange(message.Text))
+            {
+                if (ServiceConversation.TryGetChangedName(message.Text, out var changedName))
+                {
+                    state.Name = changedName;
+                    state.AwaitingNameChange = false;
+                    reply = $"تم، حدّثت اسمك إلى {changedName}.";
+                }
+                else
+                {
+                    state.AwaitingNameChange = true;
+                    reply = "أكيد، وش الاسم اللي تفضّله؟";
+                }
+            }
+            else if (state.AwaitingNameChange && ServiceConversation.TryGetName(message.Text, out var changedName))
+            {
+                state.Name = changedName;
+                state.AwaitingNameChange = false;
+                reply = $"تم، حدّثت اسمك إلى {changedName}.";
+            }
             else if (state.Name is null && ServiceConversation.TryGetName(message.Text, out var name))
             {
                 state.Name = name;
-                reply = $"تشرفنا يا {name} 🤍\n\nحفظت اسمك، وما راح أطلبه منك مرة ثانية. خدمات ري باي بتتاح تدريجيًا للمستخدمين، وحاليًا أقدر أعرّفك عليها وأجاوب عن أسئلتك. وش حاب تعرف؟";
+                reply = $"تشرفنا يا {name}، وش حاب تعرف عن ري باي؟";
             }
             else
             {
+                state.AwaitingNameChange = false;
                 // Never pass the phone number to an AI provider. No browser or payment tools are registered.
                 var context = JsonSerializer.Serialize(new { name = state.Name, recentConversation = state.Turns.TakeLast(8), currentMessage = message.Text });
                 try { reply = await agent.ReplyAsync(context, ct); }
                 catch (Exception) when (!ct.IsCancellationRequested)
                 {
-                    reply = "ري باي يهدف لمساعدتك في التصفح والتحويل والدفع بأمان، والخدمات بتتاح تدريجيًا للمستخدمين. حاليًا نعرّفك بالخدمات فقط، وما عندنا موعد إطلاق محدد نعلنه.";
+                    reply = "تعذّر عليّ الرد الآن، جرّب ترسل سؤالك مرة ثانية.";
                 }
             }
             // Commit identity before delivery so a send failure never loses a saved name.

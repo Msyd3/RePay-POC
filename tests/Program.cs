@@ -23,7 +23,7 @@ Check(handler.Replies.Last() == ServiceConversation.Welcome, "Arabic welcome wit
 await app.HandleAsync(Payload("m2", "وش الخدمات؟"), default);
 Check(provider.Calls == 1, "Questions during onboarding do not become a name");
 await app.HandleAsync(Payload("m3", "اسمي محمد"), default);
-Check(handler.Replies.Last().Contains("تشرفنا يا محمد"), "Name extracted and saved");
+Check(handler.Replies.Last().Contains("محمد"), "Name extracted and saved");
 var restarted = new ConversationStore(options, env);
 await restarted.InitializeAsync();
 app = new WhatsAppOrchestrator(meta, router, restarted);
@@ -36,12 +36,25 @@ await app.HandleAsync(Payload("m5", "1"), default);
 Check(provider.Calls == 3, "Numeric reply is normal conversation, never checkout");
 await app.HandleAsync(Payload("m6", "hello", "15550000001"), default);
 Check(handler.Replies.Last().Contains("السعودية"), "Saudi number restriction preserved");
-await new GroqAgentClient(new HttpClient(handler), options).ReplyAsync("متى الإطلاق؟", default);
+await new GroqAgentClient(new HttpClient(handler), options).ReplyAsync(provider.LastInput, default);
 using var request = JsonDocument.Parse(handler.LastGroqBody!);
 Check(request.RootElement.GetProperty("model").GetString() == ServiceConversation.ChatModel && !request.RootElement.TryGetProperty("tools", out _), "Compound override cannot enable search tools");
 Check(!ServiceConversation.TryGetName("123456", out _) && !ServiceConversation.TryGetName("مرحبا", out _), "Numbers and greetings rejected as names");
 await Task.WhenAll(app.HandleAsync(Payload("m7", "شكرا"), default), app.HandleAsync(Payload("m7", "شكرا"), default));
 Check(handler.Replies.Count == count + 3, "Concurrent duplicate serialized");
+await app.HandleAsync(Payload("m8", "غير اسمي إلى خالد"), default);
+Check(handler.Replies.Last().Contains("خالد"), "Direct rename acknowledged");
+await app.HandleAsync(Payload("m9", "ابي اغير اسمي"), default);
+Check(handler.Replies.Last().Contains("وش الاسم"), "Rename without name asks once");
+await app.HandleAsync(Payload("m10", "ناصر"), default);
+var renamedStore = new ConversationStore(options, env);
+await renamedStore.InitializeAsync();
+await using (var saved = await renamedStore.OpenSessionAsync("966500000001", default))
+    Check(saved.State.Name == "ناصر" && !saved.State.AwaitingNameChange, "Follow-up rename persisted after restart");
+await app.HandleAsync(Payload("m11", "كيف التحويل؟"), default);
+var turns = ServiceConversation.ModelTurns(provider.LastInput);
+Check(turns.Last().Text == "كيف التحويل؟" && turns.Any(t => t.Role == "assistant"), "Real role history and current question preserved");
+Check(!ServiceConversation.IsNameChange("كيف اغير اسم المستفيد؟"), "Recipient name question does not rename user");
 Console.WriteLine("All conversation checks passed.");
 
 sealed class TestProvider : IAgentProvider

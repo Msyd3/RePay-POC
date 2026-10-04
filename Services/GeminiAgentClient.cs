@@ -17,7 +17,7 @@ public sealed class GeminiAgentClient(HttpClient http, IOptions<RePayOptions> op
         var payload = new
         {
             systemInstruction = new { parts = new[] { new { text = ServiceConversation.Instructions } } },
-            contents = new[] { new { role = "user", parts = new[] { new { text = userText } } } },
+            contents = ServiceConversation.ModelTurns(userText).Select(t => new { role = t.Role == "assistant" ? "model" : "user", parts = new[] { new { text = t.Text } } }),
             generationConfig = new { temperature = 0.3 }
         };
         var response = await http.PostAsJsonAsync(url, payload, ct);

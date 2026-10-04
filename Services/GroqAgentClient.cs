@@ -19,11 +19,8 @@ public sealed class GroqAgentClient(HttpClient http, IOptions<RePayOptions> opti
         request.Content = JsonContent.Create(new
         {
             model = ServiceConversation.ChatModel,
-            messages = new[]
-            {
-                new { role = "system", content = ServiceConversation.Instructions },
-                new { role = "user", content = userText }
-            },
+            messages = new[] { new { role = "system", content = ServiceConversation.Instructions } }
+                .Concat(ServiceConversation.ModelTurns(userText).Select(t => new { role = t.Role, content = t.Text })),
             temperature = 0.3,
             max_completion_tokens = 1000
         });
