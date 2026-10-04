@@ -14,7 +14,7 @@ New Saudi WhatsApp users receive:
 
 The sender number comes from the signed WhatsApp webhook; users are never asked to type it. Once their name is saved, subsequent messages go directly to a natural service conversation without numbered menus or a footer. Questions during onboarding can be answered without forcing a name. No launch dates, pricing, licensing claims, or financial transactions are promised.
 
-Groq uses the pinned text-only `llama-3.3-70b-versatile` model; stale Compound settings are ignored deliberately. Gemini is an optional fallback without grounding or tools. Both share one service policy and bounded recent conversation context. Phone numbers are not sent to the model. `SafeBrowserAgent` is legacy code and is not registered or called by this flow.
+Groq uses the pinned text-only `qwen/qwen3.8-27b` model; stale Compound settings are ignored deliberately. Gemini is an optional fallback without grounding or tools. Both share one service policy and bounded recent conversation context. Phone numbers are not sent to the model. `SafeBrowserAgent` is legacy code and is not registered or called by this flow.
 
 ## Storage
 

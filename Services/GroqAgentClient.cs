@@ -25,7 +25,7 @@ public sealed class GroqAgentClient(HttpClient http, IOptions<RePayOptions> opti
                 new { role = "user", content = userText }
             },
             temperature = 0.3,
-            max_completion_tokens = 500
+            max_completion_tokens = 1000
         });
 
         var response = await http.SendAsync(request, ct);

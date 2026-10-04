@@ -16,7 +16,7 @@ services:
       - key: RePay__GroqApiKey
         sync: false
       - key: RePay__GroqModel
-        value: llama-3.3-70b-versatile
+        value: qwen/qwen3.8-27b
       - key: RePay__GeminiApiKey
         sync: false
       - key: RePay__GeminiModel
