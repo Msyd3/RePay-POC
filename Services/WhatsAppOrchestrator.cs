@@ -1,120 +1,57 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
 namespace RePay.WhatsAppPoc.Services;
 
-public sealed class ConversationStore
-{
-    private readonly ConcurrentDictionary<string, int> _awaitingChoice = new();
-    private readonly ConcurrentDictionary<string, int> _awaitingName = new();
-    private readonly ConcurrentDictionary<string, RePayUser> _users = new();
-    private readonly string _storagePath;
-    private readonly object _storageLock = new();
-
-    public ConversationStore(IHostEnvironment environment)
-    {
-        _storagePath = Path.Combine(environment.ContentRootPath, "App_Data", "users.json");
-        if (!File.Exists(_storagePath)) return;
-
-        try
-        {
-            var savedUsers = JsonSerializer.Deserialize<List<RePayUser>>(File.ReadAllText(_storagePath)) ?? [];
-            foreach (var user in savedUsers) _users[user.Phone] = user;
-        }
-        catch (JsonException)
-        {
-            // A malformed local POC file must not stop webhook processing.
-        }
-    }
-
-    public bool IsChoice(string phone) => _awaitingChoice.ContainsKey(phone);
-    public void AwaitChoice(string phone) => _awaitingChoice[phone] = 1;
-    public void CompleteChoice(string phone) => _awaitingChoice.TryRemove(phone, out _);
-
-    public bool IsNewUser(string phone) => !_users.ContainsKey(phone) && !_awaitingName.ContainsKey(phone);
-    public bool IsAwaitingName(string phone) => _awaitingName.ContainsKey(phone);
-    public void BeginRegistration(string phone) => _awaitingName[phone] = 1;
-    public void SaveUser(string phone, string name)
-    {
-        _users[phone] = new RePayUser(phone, name.Trim(), DateTimeOffset.UtcNow);
-        _awaitingName.TryRemove(phone, out _);
-        lock (_storageLock)
-        {
-            Directory.CreateDirectory(Path.GetDirectoryName(_storagePath)!);
-            File.WriteAllText(_storagePath, JsonSerializer.Serialize(_users.Values.OrderBy(user => user.Phone)));
-        }
-    }
-}
-
-public sealed record RePayUser(string Phone, string Name, DateTimeOffset RegisteredAt);
-
-file static class SaudiPhoneNumber
-{
-    private static readonly Regex Pattern = new("^9665\\d{8}$", RegexOptions.CultureInvariant);
-
-    public static bool IsMatch(string phone) => Pattern.IsMatch(phone);
-}
-
-public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRouter agent, SafeBrowserAgent browser, ConversationStore store)
+public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRouter agent, ConversationStore store)
 {
     public async Task HandleAsync(string rawPayload, CancellationToken ct)
     {
         using var json = JsonDocument.Parse(rawPayload);
         foreach (var message in ExtractTextMessages(json.RootElement))
         {
-            if (!SaudiPhoneNumber.IsMatch(message.Phone))
+            if (!Regex.IsMatch(message.Phone, @"^9665[0-9]{8}$"))
             {
-                await whatsapp.SendTextAsync(message.Phone,
-                    "عذرًا، خدمة RePay التجريبية متاحة حاليًا للأرقام السعودية فقط (+966 5xxxxxxxx).\n\n_RePay المالية_", ct);
+                await whatsapp.SendTextAsync(message.Phone, "خدمة ري باي متاحة حاليًا للأرقام السعودية فقط.", ct);
                 continue;
             }
-
-            if (store.IsNewUser(message.Phone))
+            await using var session = await store.OpenSessionAsync(message.Phone, ct);
+            var state = session.State;
+            if (state.ProcessedMessages.Contains(message.Id)) continue;
+            string reply;
+            if (!state.Welcomed && state.Name is null)
             {
-                store.BeginRegistration(message.Phone);
-                await whatsapp.SendTextAsync(message.Phone,
-                    "أهلًا بك في RePay 👋\n\nأنا مساعدك لتجهيز مشترياتك بأمان حتى مرحلة المراجعة قبل الدفع.\n\nما الاسم الذي تحب أن أناديك به؟\n\n_RePay المالية_", ct);
-                continue;
+                reply = ServiceConversation.Welcome;
+                state.Welcomed = true;
             }
-
-            if (store.IsAwaitingName(message.Phone))
+            else if (state.Name is null && ServiceConversation.TryGetName(message.Text, out var name))
             {
-                var name = message.Text.Trim();
-                if (name.Length is < 2 or > 80)
+                state.Name = name;
+                reply = $"تشرفنا يا {name} 🤍\n\nحفظت اسمك، وما راح أطلبه منك مرة ثانية. خدمات ري باي بتتاح تدريجيًا للمستخدمين، وحاليًا أقدر أعرّفك عليها وأجاوب عن أسئلتك. وش حاب تعرف؟";
+            }
+            else
+            {
+                // Never pass the phone number to an AI provider. No browser or payment tools are registered.
+                var context = JsonSerializer.Serialize(new { name = state.Name, recentConversation = state.Turns.TakeLast(8), currentMessage = message.Text });
+                try { reply = await agent.ReplyAsync(context, ct); }
+                catch (Exception) when (!ct.IsCancellationRequested)
                 {
-                    await whatsapp.SendTextAsync(message.Phone, "اكتب اسمك فقط، من حرفين إلى 80 حرفًا.\n\n_RePay المالية_", ct);
-                    continue;
+                    reply = "ري باي يهدف لمساعدتك في التصفح والتحويل والدفع بأمان، والخدمات بتتاح تدريجيًا للمستخدمين. حاليًا نعرّفك بالخدمات فقط، وما عندنا موعد إطلاق محدد نعلنه.";
                 }
-
-                store.SaveUser(message.Phone, name);
-                await whatsapp.SendTextAsync(message.Phone,
-                    $"حياك الله يا {name} ✨\n\nتم إنشاء حسابك في RePay. اكتب لي ما الذي تريد البحث عنه وسأعرض لك الخيارات وأجهز الطلب حتى المراجعة قبل الدفع.\n\n_RePay المالية_", ct);
-                continue;
             }
-
-            if (store.IsChoice(message.Phone) && int.TryParse(message.Text.Trim(), out var choice) && choice is >= 1 and <= 3)
-            {
-                store.CompleteChoice(message.Phone);
-                var checkout = await browser.PrepareCheckoutAsync(message.Text.Trim(), ct);
-                await whatsapp.SendTextAsync(message.Phone, $"{checkout}\n\nتوقفت هنا قبل الدفع. راجع الملخص وأرسل تأكيدك لاحقًا في نسخة RePay المتكاملة.", ct);
-                continue;
-            }
-            try
-            {
-                var reply = await agent.ReplyAsync(message.Text, ct);
-                store.AwaitChoice(message.Phone);
-                await whatsapp.SendTextAsync(message.Phone, reply, ct);
-            }
-            catch (Exception)
-            {
-                await whatsapp.SendTextAsync(message.Phone,
-                    "مساعد RePay غير متاح مؤقتًا. تحقق من مفتاح Groq وحدود الاستخدام ثم أعد المحاولة.", ct);
-            }
+            // Commit identity before delivery so a send failure never loses a saved name.
+            await session.SaveAsync(ct);
+            await whatsapp.SendTextAsync(message.Phone, reply, ct);
+            state.Turns.Add(new ChatTurn("user", message.Text));
+            state.Turns.Add(new ChatTurn("assistant", reply));
+            state.Turns = state.Turns.TakeLast(8).ToList();
+            state.ProcessedMessages.Add(message.Id);
+            state.ProcessedMessages = state.ProcessedMessages.TakeLast(100).ToList();
+            await session.SaveAsync(ct);
         }
     }
 
-    private static IEnumerable<(string Phone, string Text)> ExtractTextMessages(JsonElement root)
+    private static IEnumerable<(string Id, string Phone, string Text)> ExtractTextMessages(JsonElement root)
     {
         if (!root.TryGetProperty("entry", out var entries)) yield break;
         foreach (var entry in entries.EnumerateArray())
@@ -123,8 +60,8 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             var value = change.GetProperty("value");
             if (!value.TryGetProperty("messages", out var messages)) continue;
             foreach (var message in messages.EnumerateArray())
-                if (message.TryGetProperty("from", out var from) && message.TryGetProperty("text", out var text) && text.TryGetProperty("body", out var body))
-                    yield return (from.GetString()!, body.GetString()!);
+                if (message.TryGetProperty("id", out var id) && message.TryGetProperty("from", out var from) && message.TryGetProperty("text", out var text) && text.TryGetProperty("body", out var body))
+                    yield return (id.GetString()!, from.GetString()!, body.GetString()!);
         }
     }
 }

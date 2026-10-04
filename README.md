@@ -1,88 +1,43 @@
 # RePay POC
 
-Let your agents prepare purchases on your behalf. Payment credentials remain private, and every purchase stays subject to your approval.
+A conversational introduction to RePay's upcoming services. RePay plans to offer browsing, transfers, and payments with gradual availability to users. This version only answers service questions: it does not search, browse, prepare checkout, transfer money, or make payments.
 
-RePay is an ASP.NET Core proof of concept for agent-assisted commerce. It accepts a customer request through a configured messaging channel, searches for products, presents choices, and lets a guarded browser service prepare a basket and checkout summary. It always stops before payment: this repository contains no payment endpoint, payment credential handling, or `pay()` operation.
+## Conversation
 
-## Product flow
+New Saudi WhatsApp users receive:
 
-`Customer request → product search → numbered choices → customer selection → guarded checkout preparation → approval summary`
+> أهلًا بك في ري باي 👋🏼
+>
+> أنا مساعدك للتعرّف على خدمات ري باي القادمة في التصفح والتحويل والدفع بأمان، دون مشاركة بياناتك المالية الحساسة مع الوكيل. الخدمات بتتاح تدريجيًا للمستخدمين، وحاليًا أقدر أجاوب عن أسئلتك عنها.
+>
+> ممكن تشرفني باسمك؟
 
-RePay keeps the customer in control. The agent may discover products and prepare a checkout, but it cannot submit a purchase or access card data, passwords, or one-time codes.
+The sender number comes from the signed WhatsApp webhook; users are never asked to type it. Once their name is saved, subsequent messages go directly to a natural service conversation without numbered menus or a footer. Questions during onboarding can be answered without forcing a name. No launch dates, pricing, licensing claims, or financial transactions are promised.
 
-## Architecture
+Groq uses the pinned text-only `llama-3.3-70b-versatile` model; stale Compound settings are ignored deliberately. Gemini is an optional fallback without grounding or tools. Both share one service policy and bounded recent conversation context. Phone numbers are not sent to the model. `SafeBrowserAgent` is legacy code and is not registered or called by this flow.
 
-The project separates three replaceable boundaries:
+## Storage
 
-- **Channel adapter** receives signed customer messages and sends responses.
-- **Agent router** tries Groq first, then Gemini automatically if Groq is unavailable. More providers can be added without changing the channel or checkout flow.
-- **Browser agent** prepares a cart and checkout summary through one guarded operation.
-
-This separation is intended for later integration into the main RePay backend.
-
-## Configure secrets
-
-Do not add secrets to `appsettings.json`. Copy the values from `.env.example` into a deployment secret store or export them locally. ASP.NET's double-underscore configuration mapping is used:
-
-```bash
-export RePay__WhatsAppVerifyToken='a-long-random-value'
-export RePay__MetaAppSecret='channel app secret'
-export RePay__MetaAccessToken='channel access token'
-export RePay__MetaPhoneNumberId='channel sender id'
-export RePay__GroqApiKey='Groq API key'
-export RePay__GroqModel='groq/compound-mini'
-export RePay__GeminiApiKey='Gemini API key'
-export RePay__GeminiModel='gemini-2.5-flash'
-export RePay__BrowserAgentBaseUrl='https://internal-browser-agent.example'
-```
-
-`RePay__BrowserAgentBaseUrl` must point to a trusted internal service that accepts `POST /prepare-checkout`. Keep its browser profile isolated and restrict it to approved merchant domains.
-
-## Run
-
-```bash
-dotnet run --project RePay.WhatsAppPoc
-```
-
-Expose the app through HTTPS and confirm `https://YOUR-DOMAIN/health` before configuring the channel callback at `https://YOUR-DOMAIN/webhooks/whatsapp`.
-
-## Deploy for testing
-
-The included `Dockerfile` and `render.yaml` can run the POC on Render's free web-service plan. Connect this repository in Render, create the service from the Blueprint, and enter the secret values when prompted. After deployment, update the Meta callback URL to:
+Set `RePay__DatabaseConnectionString` to a PostgreSQL Npgsql connection string in your hosting secrets:
 
 ```text
-https://YOUR-RENDER-SERVICE.onrender.com/webhooks/whatsapp
+Host=YOUR-HOST;Database=neondb;Username=YOUR-USER;Password=YOUR-PASSWORD;SSL Mode=VerifyFull
 ```
 
-The local `App_Data` user store is ephemeral on free hosting. Replace it with the RePay database before using the service beyond a short POC.
+The app creates `repay_conversations` on startup with a unique phone key. It stores the name, onboarding state, last eight conversation messages, and last 100 processed message IDs. The database must be private; never commit connection strings or customer data. Old `App_Data/users.json` names are imported without overwriting existing database rows when that file is still available.
 
-## Browser-agent contract
+Without a connection string, local development uses SQLite at `App_Data/repay.db`. Set `RePay__DataDirectory` to use a persistent mounted directory. **Render's free web-service filesystem is ephemeral: configure external PostgreSQL before relying on name retention across deploys/restarts.** Creating the schema in code alone does not provision or connect a hosted database.
 
-RePay calls the browser agent with one guarded request:
+This POC runs one application instance. Message serialization is local to that instance; a multi-instance deployment needs distributed coordination. Recent message deduplication prevents normal webhook repeats, but a crash after Meta accepts a reply and before the database save can still duplicate a reply. Add a durable inbox/outbox before production.
 
-```http
-POST /prepare-checkout
-Content-Type: application/json
+## Configuration and running
 
-{ "choice": "1", "stopBeforePayment": true }
+Use environment variables from `.env.example` (the app does not auto-load that file). Store all secrets in Render's environment secret settings, never in source or `appsettings.json`.
+
+```bash
+dotnet run --project RePay.WhatsAppPoc.csproj
 ```
 
-The browser agent must add the chosen item to a basket and return a concise checkout summary. It must reject all payment actions and never collect or transmit payment credentials. A separate, reviewed RePay purchase-approval workflow should own any future payment step.
+For Render, use the included Dockerfile/Blueprint and configure PostgreSQL separately. Verify `/health`, then set Meta's Callback URL to `https://YOUR-HOST/webhooks/whatsapp` and Verify Token to the same value as `RePay__WhatsAppVerifyToken`. Subscribe the app/WABA to `messages`. Keep `RePay__MetaAccessToken` valid with WhatsApp messaging permissions; webhook verification alone does not test outbound authorization.
 
-## Agent providers
-
-The starter implementation uses Groq first and Gemini as fallback. Both implement `IAgentProvider`, so a third provider or a specialised agent can be added without changing message handling:
-
-- Gemini for hosted models and search grounding.
-- OpenRouter for provider fallback.
-- Ollama with an open model on your own server for fixed infrastructure cost and greater control.
-
-Store the chosen provider's API key only in runtime secrets. Never commit it.
-
-## Production follow-up
-
-- Use a durable queue so callback acknowledgements are immediate.
-- Store conversation, merchant, cart, and approval state in a database.
-- Add idempotency keyed by message ID.
-- Require an explicit approval step outside the agent before every purchase.
-- Use a stable HTTPS deployment rather than a temporary development tunnel.
+A failed webhook returns 503 so Meta can retry. Model failures use a short service-information fallback; failed delivery is not silently acknowledged as success. Database startup failures stop startup rather than resetting identities. Run `dotnet run --project tests/ConversationChecks.csproj` to check onboarding, restart persistence, deduplication, Saudi-only handling, and tool-free model requests without live messages.

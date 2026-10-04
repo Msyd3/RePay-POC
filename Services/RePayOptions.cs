@@ -2,6 +2,8 @@ namespace RePay.WhatsAppPoc.Services;
 
 public sealed class RePayOptions
 {
+    public string DatabaseConnectionString { get; init; } = "";
+    public string DataDirectory { get; init; } = "App_Data";
     public string WhatsAppVerifyToken { get; init; } = "";
     public string MetaAppSecret { get; init; } = "";
     public string MetaAccessToken { get; init; } = "";
@@ -12,7 +14,7 @@ public sealed class RePayOptions
     public string OpenAiApiKey { get; init; } = "";
     public string OpenAiModel { get; init; } = "gpt-4.1-mini";
     public string GroqApiKey { get; init; } = "";
-    public string GroqModel { get; init; } = "groq/compound-mini";
+    public string GroqModel { get; init; } = "llama-3.3-70b-versatile";
     public string GeminiApiKey { get; init; } = "";
     public string GeminiModel { get; init; } = "gemini-2.5-flash";
     public string BrowserAgentBaseUrl { get; init; } = "";

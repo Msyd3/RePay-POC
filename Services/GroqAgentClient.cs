@@ -10,7 +10,7 @@ public sealed class GroqAgentClient(HttpClient http, IOptions<RePayOptions> opti
     private readonly RePayOptions _options = options.Value;
     public string Name => "Groq";
     public bool IsConfigured => !string.IsNullOrWhiteSpace(_options.GroqApiKey);
-    private const string Instructions = "You are RePay's shopping assistant. Reply in Arabic unless the user writes another language. Search and compare products when the selected model supports it. Never request or accept card data, passwords, OTPs, or payment details. Never claim a purchase completed. Give short, WhatsApp-friendly options numbered 1 to 3. Once the customer selects an option, say you are preparing the basket and checkout summary. The system, not you, will stop before payment.";
+
 
     public async Task<string> ReplyAsync(string userText, CancellationToken ct)
     {
@@ -18,13 +18,14 @@ public sealed class GroqAgentClient(HttpClient http, IOptions<RePayOptions> opti
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.GroqApiKey);
         request.Content = JsonContent.Create(new
         {
-            model = _options.GroqModel,
+            model = ServiceConversation.ChatModel,
             messages = new[]
             {
-                new { role = "system", content = Instructions },
+                new { role = "system", content = ServiceConversation.Instructions },
                 new { role = "user", content = userText }
             },
-            temperature = 0.3
+            temperature = 0.3,
+            max_completion_tokens = 500
         });
 
         var response = await http.SendAsync(request, ct);

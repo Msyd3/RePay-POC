@@ -25,7 +25,11 @@ public static class WebhookEndpoints
             return Results.Unauthorized();
 
         try { await orchestrator.HandleAsync(rawBody, request.HttpContext.RequestAborted); }
-        catch (Exception ex) { loggerFactory.CreateLogger("Webhook").LogError(ex, "Webhook handling failed"); }
+        catch (Exception ex)
+        {
+            loggerFactory.CreateLogger("Webhook").LogError(ex, "Webhook handling failed");
+            return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+        }
         return Results.Ok(); // Meta retries non-2xx responses.
     }
 
