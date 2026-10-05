@@ -42,7 +42,7 @@ public static class DemoConversation
                 // Preserve a product already supplied with a purchase request.
                 var product = Regex.Match(clean, @"^(?:(?:ابي|ابغى|اريد)\s+)?(?:اشتري|ادفع قيمة|ابحث عن|دور لي|ادور على)\s+(.+)$");
                 if (product.Success) return PurchaseSummary(state, demo, product.Groups[1].Value, out reply);
-                reply = "*مثال شراء — بدون تنفيذ*\n\nوش المنتج اللي تبيه؟ تقدر تضيف اسم المتجر أو رابطه في نفس الرسالة. النطاق الافتراضي شركات سعودية.";
+                reply = "*مثال شراء — بدون تنفيذ*\n\nوش المنتج اللي تبيه؟ تقدر تضيف اسم المتجر أو رابطه في نفس الرسالة. يكفي اسم المنتج؛ النطاق الافتراضي شركات سعودية أو متاجر تخدم السعودية.";
             }
             return true;
         }
@@ -82,7 +82,7 @@ public static class DemoConversation
         if (product.Length > 250 || Regex.IsMatch(product, @"^(نعم|ايه|تمام|طيب)$"))
         { reply = "اكتب اسم المنتج اللي تبيه للمثال."; return true; }
         demo.Product = SafeText(product);
-        demo.Summary = $"*العملية:* شراء تجريبي\n*المنتج وطلبك:* {demo.Product}\n*نطاق البحث المقترح:* الشركات السعودية، أو المتجر أو الدولة التي حددتها\n*مبلغ توضيحي فقط:* 100.00 ريال سعودي (ليس سعر المنتج)";
+        demo.Summary = $"*العملية:* شراء تجريبي\n*المنتج وطلبك:* {demo.Product}\n*نطاق البحث المقترح:* الشركات السعودية أو المتاجر التي تخدم السعودية؛ يُقدّم متجرك المحدد إن ذكرته\n*مبلغ توضيحي فقط:* 100.00 ريال سعودي (ليس سعر المنتج)";
         demo.Stage = "confirm";
         state.PaymentExamples++;
         reply = $"*مثال على طلبك*\n\n{demo.Summary}\n\nالفكرة أدور لك غرضك وأجهّز الشراء، وأعرض التفاصيل والسعر النهائي لموافقتك؛ ما يشترط تكاملًا مباشرًا مع المتجر.\n\n_هنا ما صار بحث أو شراء أو دفع فعلي._";
