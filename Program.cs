@@ -26,6 +26,11 @@ var app = builder.Build();
 app.UseRateLimiter();
 app.UseStaticFiles();
 app.MapGet("/analytics", () => Results.Redirect("/analytics.html"));
+app.MapGet("/api/analytics/login-mode", (Microsoft.Extensions.Options.IOptions<RePayOptions> options, HttpContext context) =>
+{
+    context.Response.Headers.CacheControl = "no-store";
+    return Results.Ok(new { phone = !string.IsNullOrWhiteSpace(options.Value.AnalyticsPhone) });
+});
 app.MapGet("/api/analytics", AnalyticsEndpoints.GetAsync).RequireRateLimiting("analytics");
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 app.MapGet("/webhooks/whatsapp", WebhookEndpoints.VerifyAsync);

@@ -2,6 +2,7 @@ namespace RePay.WhatsAppPoc.Services;
 
 public sealed class RePayOptions
 {
+    public string AnalyticsPhone { get; init; } = "";
     public string AnalyticsPassword { get; init; } = "";
     public string DatabaseConnectionString { get; init; } = "";
     public string DataDirectory { get; init; } = "App_Data";

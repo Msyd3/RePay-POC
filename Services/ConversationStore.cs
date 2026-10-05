@@ -103,7 +103,7 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
         {
             var s = JsonSerializer.Deserialize<ConversationState>(rows.GetString(1))!;
             var phone = rows.GetString(0);
-            userList.Add(new { name = s.Name ?? "لم يحدد الاسم", lastFour = phone.Length >= 4 ? phone[^4..] : "", messages = s.MessageCount });
+            userList.Add(new { name = s.Name ?? "لم يحدد الاسم", mobile = ConversationLifecycle.MaskPhone(phone), messages = s.MessageCount });
             users++;
             conversations += s.ConversationCount;
             messages += s.MessageCount;

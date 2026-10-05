@@ -97,7 +97,7 @@ await using (var confirmed = await restarted.OpenSessionAsync("966500000001", de
     Check(confirmed.State.Demo is null, "Confirmation clears persisted demo state");
 using var maskedStats = JsonDocument.Parse(JsonSerializer.Serialize(await restarted.AnalyticsAsync(default)));
 var userRow = maskedStats.RootElement.GetProperty("userList")[0];
-Check(userRow.GetProperty("lastFour").GetString() == "0001" && userRow.GetProperty("name").GetString() == "محمد السالم" && !maskedStats.RootElement.ToString().Contains("966500000001"), "Analytics exposes name and only last four digits");
+Check(userRow.GetProperty("mobile").GetString() == "050 XXXX 0001" && userRow.GetProperty("name").GetString() == "محمد السالم" && !maskedStats.RootElement.ToString().Contains("966500000001"), "Analytics exposes name and masked local phone");
 await app.HandleAsync(Payload("follow-retry-start", "جرب شراء"), default);
 handler.FailAfter = 1;
 try { await app.HandleAsync(Payload("follow-retry-product", "جوال"), default); } catch (HttpRequestException) { }
@@ -126,6 +126,15 @@ switching.Turns.Add(new ChatTurn("user", "old context"));
 Check(ConversationLifecycle.Expire(switching, instant) && switching.Demo is null && switching.Turns.Count == 0 && switching.Name == "محمد العلي", "Five-minute reset clears conversation but preserves identity");
 Check(ConversationLifecycle.Format("مثال.\n*100.00 ريال سعودي*\nhttps://repay.sa") == "مثال\n*100.00 ريال سعودي*\nhttps://repay.sa", "Formatting removes terminal periods without altering amounts or URLs");
 Check(demoState.Demo?.Summary?.Contains("حساب ري باي") == true, "Summary includes illustrative source account");
+
+Check(ConversationLifecycle.MaskPhone("٩٦٦٥٤١٠٠٩٤٤٩") == "054 XXXX 9449", "Arabic phone masking");
+Check(ConversationLifecycle.Format("١٢٣ ۴۵۶") == "123 456", "All outgoing digits use Latin numerals");
+var phoneOptions = Microsoft.Extensions.Options.Options.Create(new RePayOptions { AnalyticsPhone = "0500000001" });
+httpContext.Request.Headers.Authorization = "Bearer ٠٥٠٠٠٠٠٠٠١";
+Check(await AnalyticsEndpoints.GetAsync(httpContext, phoneOptions, restarted) is not Microsoft.AspNetCore.Http.HttpResults.UnauthorizedHttpResult, "Phone login accepts Arabic digits");
+httpContext.Request.Headers.Authorization = "Bearer 0500000002";
+Check(await AnalyticsEndpoints.GetAsync(httpContext, phoneOptions, restarted) is Microsoft.AspNetCore.Http.HttpResults.UnauthorizedHttpResult, "Phone login rejects other numbers");
+
 Console.WriteLine("All conversation checks passed.");
 
 sealed class TestProvider : IAgentProvider

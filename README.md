@@ -57,3 +57,8 @@ The dashboard bundles the owner-supplied Thmanyah Sans webfont so it renders acr
 Render Free sleeps after 15 idle minutes. Deterministic examples avoid model latency, and each AI provider has a 15-second timeout; these cannot remove hosting cold starts. An always-on instance is required for consistently prompt first replies.
 
 Conversations reset after five idle minutes on the next incoming message, preserving saved identity, counters and deduplication. Registration and name changes require a multi-part name. Name editing takes priority over examples. A new transfer or purchase request can switch example types at any step. Summaries identify RePay as an illustrative source account only. Outgoing sentence-ending periods are removed without altering decimals or URLs.
+
+### Analytics phone access (optional)
+By default analytics still requires `RePay__AnalyticsPassword`. Setting `RePay__AnalyticsPhone` switches login to the configured local Saudi mobile number. This is a low-security access gate, not phone ownership verification: anyone knowing the number can access analytics. Keep the value only in hosting environment variables, never in frontend code. Arabic and Persian digits are accepted and normalized to ASCII. Rate limiting remains enabled. Clear `RePay__AnalyticsPhone` to restore password access.
+
+Analytics returns only a masked local phone (e.g. `054 XXXX 9449`), never the complete phone. Counters, timestamps and outgoing message digits use Latin numerals.
