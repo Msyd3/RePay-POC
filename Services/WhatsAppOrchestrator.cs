@@ -19,7 +19,14 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             var state = session.State;
             if (state.ProcessedMessages.Contains(message.Id)) continue;
             string reply;
-            if (!state.Welcomed && state.Name is null)
+            if (state.PendingMessageId == message.Id && state.PendingReply is not null)
+                reply = state.PendingReply;
+            else if (DemoConversation.TryReply(state, message.Text, out var demoReply))
+            {
+                state.Welcomed = true;
+                reply = demoReply;
+            }
+            else if (!state.Welcomed && state.Name is null)
             {
                 reply = ServiceConversation.Welcome;
                 state.Welcomed = true;
@@ -58,24 +65,34 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             {
                 state.AwaitingNameChange = false;
                 // Never pass the phone number to an AI provider. No browser or payment tools are registered.
-                var context = JsonSerializer.Serialize(new { name = state.Name, recentConversation = state.Turns.TakeLast(8), currentMessage = message.Text });
+                var context = JsonSerializer.Serialize(new { name = state.Name, recentConversation = state.Turns.TakeLast(8).Select(t => new ChatTurn(t.Role, RedactPhone(t.Text))), currentMessage = RedactPhone(message.Text) });
                 try { reply = await agent.ReplyAsync(context, ct); }
                 catch (Exception) when (!ct.IsCancellationRequested)
                 {
                     reply = "تعذّر عليّ الرد الآن، جرّب ترسل سؤالك مرة ثانية.";
                 }
             }
-            // Commit identity before delivery so a send failure never loses a saved name.
+            // Persist the generated reply and demo transition, so retries do not advance the example twice.
+            state.PendingMessageId = message.Id;
+            state.PendingReply = reply;
             await session.SaveAsync(ct);
             await whatsapp.SendTextAsync(message.Phone, reply, ct);
-            state.Turns.Add(new ChatTurn("user", message.Text));
-            state.Turns.Add(new ChatTurn("assistant", reply));
+            var now = DateTimeOffset.UtcNow;
+            if (state.LastMessageAt is null || now - state.LastMessageAt > TimeSpan.FromMinutes(30)) state.ConversationCount++;
+            state.LastMessageAt = now;
+            state.MessageCount++;
+            state.PendingMessageId = null;
+            state.PendingReply = null;
+            state.Turns.Add(new ChatTurn("user", RedactPhone(message.Text)));
+            state.Turns.Add(new ChatTurn("assistant", RedactPhone(reply)));
             state.Turns = state.Turns.TakeLast(8).ToList();
             state.ProcessedMessages.Add(message.Id);
             state.ProcessedMessages = state.ProcessedMessages.TakeLast(100).ToList();
             await session.SaveAsync(ct);
         }
     }
+
+    private static string RedactPhone(string text) => Regex.Replace(text, @"[+＋]?[0-9٠-٩][0-9٠-٩ ()-]{7,}[0-9٠-٩]", "[رقم جوال]");
 
     private static IEnumerable<(string Id, string Phone, string Text)> ExtractTextMessages(JsonElement root)
     {
@@ -86,8 +103,18 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             var value = change.GetProperty("value");
             if (!value.TryGetProperty("messages", out var messages)) continue;
             foreach (var message in messages.EnumerateArray())
-                if (message.TryGetProperty("id", out var id) && message.TryGetProperty("from", out var from) && message.TryGetProperty("text", out var text) && text.TryGetProperty("body", out var body))
+            {
+                if (!message.TryGetProperty("id", out var id) || !message.TryGetProperty("from", out var from)) continue;
+                if (message.TryGetProperty("text", out var text) && text.TryGetProperty("body", out var body))
                     yield return (id.GetString()!, from.GetString()!, body.GetString()!);
+                else if (message.TryGetProperty("contacts", out var contacts) && contacts.GetArrayLength() > 0)
+                {
+                    var contact = contacts[0];
+                    var name = contact.TryGetProperty("name", out var n) && n.TryGetProperty("formatted_name", out var full) ? full.GetString() : "جهة اتصال";
+                    var phone = contact.TryGetProperty("phones", out var phones) && phones.GetArrayLength() > 0 && phones[0].TryGetProperty("phone", out var number) ? number.GetString() : "";
+                    yield return (id.GetString()!, from.GetString()!, $"{name} {phone}".Trim());
+                }
+            }
         }
     }
 }

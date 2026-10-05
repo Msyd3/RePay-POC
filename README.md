@@ -43,3 +43,15 @@ For Render, use the included Dockerfile/Blueprint and configure PostgreSQL separ
 A failed webhook returns 503 so Meta can retry. Model failures use a short service-information fallback; failed delivery is not silently acknowledged as success. Database startup failures stop startup rather than resetting identities. Run `dotnet run --project tests/ConversationChecks.csproj` to check onboarding, restart persistence, deduplication, Saudi-only handling, and tool-free model requests without live messages.
 
 Conversation updates: short contextual replies, future transfer/purchase examples with approval, and https://repay.sa on request. Users can say `غير اسمي إلى خالد` or `ابي اغير اسمي` then provide their preferred name. Name changes persist in the existing database. No browsing or transaction tools are enabled.
+
+## Interactive examples and private analytics
+
+`جرب تحويل` collects a recipient name, phone, or one shared WhatsApp contact and a SAR amount; the final message is explicitly a simulation. `جرب شراء` collects a product and a store/scope, defaulting to Saudi companies unless the user specifies otherwise. Neither calls search, browser, bank, or payment tools. Store integration is not assumed for the proposed future flow; availability is not guaranteed.
+
+`/analytics` shows aggregate numbers only. Set `RePay__AnalyticsPassword` to a random password of at least 24 characters. The API fails closed when unset. The password is entered in the page and sent via an Authorization header, never a URL, and held only in page memory. Use HTTPS. No names, numbers or message text are returned by analytics.
+
+Users = all stored unique WhatsApp senders. Conversations = sessions separated by 30 minutes; messages = successfully replied-to messages; search examples = shopping examples started; transfer examples = transfer examples started; payment examples = purchase summaries produced. Activity counters start with this release and are not reconstructed from truncated old histories. Cancelled examples remain in start counters. Actual financial transactions stay zero. Duplicate webhook retries reuse a persisted pending reply instead of advancing a demo twice.
+
+The supplied Thmanyah license prohibits redistribution of standalone font files. No font binary is published in this repository. The page uses an installed local Thmanyah font, or lets its owner load the supplied WOFF2 from their device without uploading it.
+
+Render Free sleeps after 15 idle minutes. Deterministic examples avoid model latency, and each AI provider has a 15-second timeout; these cannot remove hosting cold starts. An always-on instance is required for consistently prompt first replies.

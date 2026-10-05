@@ -12,7 +12,7 @@ public sealed class AgentRouter(IEnumerable<IAgentProvider> providers, ILogger<A
         foreach (var provider in configured)
         {
             try { return await provider.ReplyAsync(userText, ct); }
-            catch (Exception ex)
+            catch (Exception ex) when (!ct.IsCancellationRequested)
             {
                 lastError = ex;
                 logger.LogWarning(ex, "Agent provider {Provider} failed; trying the next provider.", provider.Name);

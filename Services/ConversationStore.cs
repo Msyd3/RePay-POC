@@ -11,6 +11,15 @@ public sealed class ConversationState
 {
     public string? Name { get; set; }
     public bool AwaitingNameChange { get; set; }
+    public DemoState? Demo { get; set; }
+    public long MessageCount { get; set; }
+    public long ConversationCount { get; set; }
+    public long SearchExamples { get; set; }
+    public long TransferExamples { get; set; }
+    public long PaymentExamples { get; set; }
+    public DateTimeOffset? LastMessageAt { get; set; }
+    public string? PendingMessageId { get; set; }
+    public string? PendingReply { get; set; }
     public bool Welcomed { get; set; }
     public List<ChatTurn> Turns { get; set; } = [];
     public List<string> ProcessedMessages { get; set; } = [];
@@ -77,6 +86,27 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
         Add(cmd, "phone", phone);
         Add(cmd, "state", JsonSerializer.Serialize(state));
         await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<object> AnalyticsAsync(CancellationToken ct)
+    {
+        await using var db = CreateConnection();
+        await db.OpenAsync(ct);
+        await using var cmd = db.CreateCommand();
+        cmd.CommandText = "SELECT state FROM repay_conversations";
+        await using var rows = await cmd.ExecuteReaderAsync(ct);
+        long users = 0, conversations = 0, messages = 0, searches = 0, transfers = 0, payments = 0;
+        while (await rows.ReadAsync(ct))
+        {
+            var s = JsonSerializer.Deserialize<ConversationState>(rows.GetString(0))!;
+            users++;
+            conversations += s.ConversationCount;
+            messages += s.MessageCount;
+            searches += s.SearchExamples;
+            transfers += s.TransferExamples;
+            payments += s.PaymentExamples;
+        }
+        return new { users, conversations, messages, searches, transfers, payments, actualTransactions = 0, updatedAt = DateTimeOffset.UtcNow };
     }
 
     private static void Add(DbCommand cmd, string name, string value)
