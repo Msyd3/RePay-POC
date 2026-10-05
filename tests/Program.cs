@@ -56,21 +56,20 @@ var turns = ServiceConversation.ModelTurns(provider.LastInput);
 Check(turns.Last().Text == "كيف التحويل؟" && turns.Any(t => t.Role == "assistant"), "Real role history and current question preserved");
 Check(!ServiceConversation.IsNameChange("كيف اغير اسم المستفيد؟"), "Recipient name question does not rename user");
 var demoState = new ConversationState();
-Check(DemoConversation.TryReply(demoState, "جرب تحويل", out var demoReply) && demoReply.Contains("بدون تحويل"), "Transfer example starts without financial execution");
+Check(DemoConversation.TryReply(demoState, "جرب تحويل", out var demoReply) && demoReply.Contains("بدون تنفيذ"), "Transfer example starts without financial execution");
 DemoConversation.TryReply(demoState, "محمد 0500000000", out _);
 Check(DemoConversation.TryReply(demoState, "١٠٠ ريال", out demoReply) && demoReply.Contains("100") && demoReply.Contains("ما تم تحويل"), "Arabic amount creates non-executing summary");
 DemoConversation.TryReply(demoState, "جرب شراء", out _);
-DemoConversation.TryReply(demoState, "جوال بميزانية 2000", out _);
-DemoConversation.TryReply(demoState, "سعودي", out demoReply);
+DemoConversation.TryReply(demoState, "جوال بميزانية 2000", out demoReply);
 Check(demoReply.Contains("الشركات السعودية") && demoReply.Contains("ما صار بحث"), "Saudi-default purchase example never claims live search");
 Check(demoState.TransferExamples == 1 && demoState.SearchExamples == 1 && demoState.PaymentExamples == 1, "Example counters have explicit meanings");
 await app.HandleAsync(Payload("demo1", "جرب تحويل"), default);
 var contactPayload = JsonSerializer.Serialize(new { entry = new[] { new { changes = new[] { new { value = new { messages = new[] { new { id = "demo2", from = "966500000001", contacts = new[] { new { name = new { formatted_name = "خالد" }, phones = new[] { new { phone = "0500000000" } } } } } } } } } } } });
 await app.HandleAsync(contactPayload, default);
-Check(handler.Replies.Last().Contains("كم المبلغ"), "Shared WhatsApp contact parsed into example recipient");
+Check(handler.Replies.Last().Contains("الريال السعودي"), "Shared WhatsApp contact parsed into example recipient");
 await app.HandleAsync(Payload("demo3", "250"), default);
-Check(handler.Replies.Last().Contains("خالد") && handler.Replies.Last().Contains("250"), "Shared contact appears in transfer example summary");
-await app.HandleAsync(Payload("demo4", "وش اسمي؟"), default);
+Check(handler.Replies[^2].Contains("خالد") && handler.Replies[^2].Contains("250.00 ريال سعودي"), "Shared contact appears in transfer example summary");
+await app.HandleAsync(Payload("demo4", "كيف تحمون البيانات؟"), default);
 Check(!provider.LastInput.Contains("0500000000"), "Recipient phone excluded from model history");
 using var stats = JsonDocument.Parse(JsonSerializer.Serialize(await restarted.AnalyticsAsync(default)));
 Check(stats.RootElement.GetProperty("transfers").GetInt64() == 1 && stats.RootElement.GetProperty("users").GetInt64() == 1, "Persistent analytics count example and unique user");
@@ -83,6 +82,31 @@ await app.HandleAsync(Payload("retry-demo", "جرب تحويل"), default);
 await using (var retryState = await restarted.OpenSessionAsync("966500000001", default))
     Check(retryState.State.TransferExamples == 2 && retryState.State.Demo?.Stage == "recipient", "Failed delivery retry reuses summary without double-counting or advancing");
 Check(!DemoConversation.TryReply(new ConversationState(), "ما دوركم؟", out _), "Service questions do not start shopping examples");
+await app.HandleAsync(Payload("name-during-demo", "ممكن تغير الاسم؟"), default);
+await app.HandleAsync(Payload("name-followup", "سلمان"), default);
+await app.HandleAsync(Payload("name-read", "وش اسمي؟"), default);
+Check(handler.Replies.Last().Contains("*سلمان*"), "Name update takes priority over active demo and is read back");
+await app.HandleAsync(Payload("name-attached", "غير اسمي لمحمد"), default);
+Check(handler.Replies.Last().Contains("*محمد*"), "Attached Arabic preposition parsed for name update");
+await app.HandleAsync(Payload("buy-example", "جرب دفع"), default);
+await app.HandleAsync(Payload("buy-product", "سماعات من متجر سعودي"), default);
+Check(handler.Replies[^2].Contains("سماعات") && handler.Replies.Last().Contains("تؤكد"), "Product immediately produces summary plus separate confirmation prompt");
+await app.HandleAsync(Payload("buy-confirm", "تأكيد"), default);
+Check(handler.Replies.Last().Contains("تم تأكيد المثال فقط") && handler.Replies.Last().Contains("طلب جديد"), "Confirm shows summary and resets without payment");
+await using (var confirmed = await restarted.OpenSessionAsync("966500000001", default))
+    Check(confirmed.State.Demo is null, "Confirmation clears persisted demo state");
+using var maskedStats = JsonDocument.Parse(JsonSerializer.Serialize(await restarted.AnalyticsAsync(default)));
+var userRow = maskedStats.RootElement.GetProperty("userList")[0];
+Check(userRow.GetProperty("lastFour").GetString() == "0001" && userRow.GetProperty("name").GetString() == "محمد" && !maskedStats.RootElement.ToString().Contains("966500000001"), "Analytics exposes name and only last four digits");
+await app.HandleAsync(Payload("follow-retry-start", "جرب شراء"), default);
+handler.FailAfter = 1;
+try { await app.HandleAsync(Payload("follow-retry-product", "جوال"), default); } catch (HttpRequestException) { }
+var beforeRetry = handler.Replies.Count;
+await app.HandleAsync(Payload("follow-retry-product", "جوال"), default);
+Check(handler.Replies.Count == beforeRetry + 1 && handler.Replies.Last().Contains("تؤكد"), "Follow-up retry does not resend delivered summary");
+var currencyState = new ConversationState { Demo = new DemoState { Kind = "transfer", Stage = "amount", Recipient = "خالد" } };
+DemoConversation.TryReply(currencyState, "100 دولار", out var currencyReply);
+Check(currencyState.Demo.Stage == "amount" && currencyReply.Contains("السعودي فقط"), "Non-SAR amount rejected rather than relabelled");
 Console.WriteLine("All conversation checks passed.");
 
 sealed class TestProvider : IAgentProvider
@@ -92,12 +116,14 @@ sealed class TestProvider : IAgentProvider
 }
 sealed class RecordingHandler : HttpMessageHandler
 {
- public List<string> Replies = []; public string? LastGroqBody; public bool FailNext;
+ public List<string> Replies = []; public string? LastGroqBody; public bool FailNext; public int FailAfter = -1;
  protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
  {
   var body = await request.Content!.ReadAsStringAsync(ct);
   if (request.RequestUri!.Host == "api.groq.com") { LastGroqBody = body; return new(HttpStatusCode.OK) { Content = new StringContent("{\"choices\":[{\"message\":{\"content\":\"الخدمات قريبًا\"}}]}") }; }
   if (request.RequestUri.Host != "graph.facebook.com") throw new Exception("Unexpected browser/network call");
+  if (FailAfter == 0) { FailAfter = -1; return new(HttpStatusCode.ServiceUnavailable); }
+  if (FailAfter > 0) FailAfter--;
   if (FailNext) { FailNext = false; return new(HttpStatusCode.ServiceUnavailable); }
   using var json = JsonDocument.Parse(body); Replies.Add(json.RootElement.GetProperty("text").GetProperty("body").GetString()!);
   return new(HttpStatusCode.OK) { Content = new StringContent("{}") };

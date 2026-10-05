@@ -20,6 +20,8 @@ public sealed class ConversationState
     public DateTimeOffset? LastMessageAt { get; set; }
     public string? PendingMessageId { get; set; }
     public string? PendingReply { get; set; }
+    public string? PendingFollowUp { get; set; }
+    public int PendingReplyIndex { get; set; }
     public bool Welcomed { get; set; }
     public List<ChatTurn> Turns { get; set; } = [];
     public List<string> ProcessedMessages { get; set; } = [];
@@ -93,12 +95,15 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
         await using var db = CreateConnection();
         await db.OpenAsync(ct);
         await using var cmd = db.CreateCommand();
-        cmd.CommandText = "SELECT state FROM repay_conversations";
+        cmd.CommandText = "SELECT phone,state FROM repay_conversations";
         await using var rows = await cmd.ExecuteReaderAsync(ct);
+        var userList = new List<object>();
         long users = 0, conversations = 0, messages = 0, searches = 0, transfers = 0, payments = 0;
         while (await rows.ReadAsync(ct))
         {
-            var s = JsonSerializer.Deserialize<ConversationState>(rows.GetString(0))!;
+            var s = JsonSerializer.Deserialize<ConversationState>(rows.GetString(1))!;
+            var phone = rows.GetString(0);
+            userList.Add(new { name = s.Name ?? "لم يحدد الاسم", lastFour = phone.Length >= 4 ? phone[^4..] : "", messages = s.MessageCount });
             users++;
             conversations += s.ConversationCount;
             messages += s.MessageCount;
@@ -106,7 +111,7 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
             transfers += s.TransferExamples;
             payments += s.PaymentExamples;
         }
-        return new { users, conversations, messages, searches, transfers, payments, actualTransactions = 0, updatedAt = DateTimeOffset.UtcNow };
+        return new { userList, users, conversations, messages, searches, transfers, payments, actualTransactions = 0, updatedAt = DateTimeOffset.UtcNow };
     }
 
     private static void Add(DbCommand cmd, string name, string value)

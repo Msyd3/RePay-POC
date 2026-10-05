@@ -19,8 +19,12 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             var state = session.State;
             if (state.ProcessedMessages.Contains(message.Id)) continue;
             string reply;
-            if (state.PendingMessageId == message.Id && state.PendingReply is not null)
-                reply = state.PendingReply;
+            var retry = state.PendingMessageId == message.Id && state.PendingReply is not null;
+            if (!retry) { state.PendingFollowUp = null; state.PendingReplyIndex = 0; }
+            if (retry)
+                reply = state.PendingReply!;
+            else if (NameConversation.TryReply(state, message.Text, out var nameReply))
+                reply = nameReply;
             else if (DemoConversation.TryReply(state, message.Text, out var demoReply))
             {
                 state.Welcomed = true;
@@ -30,31 +34,6 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             {
                 reply = ServiceConversation.Welcome;
                 state.Welcomed = true;
-            }
-            else if (state.AwaitingNameChange && Regex.IsMatch(message.Text.Trim(), @"^(إلغاء|الغاء|خلاص|لا تغيره|لا تغيّر اسمي)$"))
-            {
-                state.AwaitingNameChange = false;
-                reply = "تمام، اسمك يبقى مثل ما هو.";
-            }
-            else if (ServiceConversation.IsNameChange(message.Text))
-            {
-                if (ServiceConversation.TryGetChangedName(message.Text, out var changedName))
-                {
-                    state.Name = changedName;
-                    state.AwaitingNameChange = false;
-                    reply = $"تم، حدّثت اسمك إلى {changedName}.";
-                }
-                else
-                {
-                    state.AwaitingNameChange = true;
-                    reply = "أكيد، وش الاسم اللي تفضّله؟";
-                }
-            }
-            else if (state.AwaitingNameChange && ServiceConversation.TryGetName(message.Text, out var changedName))
-            {
-                state.Name = changedName;
-                state.AwaitingNameChange = false;
-                reply = $"تم، حدّثت اسمك إلى {changedName}.";
             }
             else if (state.Name is null && ServiceConversation.TryGetName(message.Text, out var name))
             {
@@ -76,7 +55,18 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             state.PendingMessageId = message.Id;
             state.PendingReply = reply;
             await session.SaveAsync(ct);
-            await whatsapp.SendTextAsync(message.Phone, reply, ct);
+            if (state.PendingReplyIndex == 0)
+            {
+                await whatsapp.SendTextAsync(message.Phone, reply, ct);
+                state.PendingReplyIndex = 1;
+                await session.SaveAsync(ct);
+            }
+            if (state.PendingFollowUp is not null && state.PendingReplyIndex == 1)
+            {
+                await whatsapp.SendTextAsync(message.Phone, state.PendingFollowUp, ct);
+                state.PendingReplyIndex = 2;
+                await session.SaveAsync(ct);
+            }
             var now = DateTimeOffset.UtcNow;
             if (state.LastMessageAt is null || now - state.LastMessageAt > TimeSpan.FromMinutes(30)) state.ConversationCount++;
             state.LastMessageAt = now;
@@ -85,6 +75,9 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             state.PendingReply = null;
             state.Turns.Add(new ChatTurn("user", RedactPhone(message.Text)));
             state.Turns.Add(new ChatTurn("assistant", RedactPhone(reply)));
+            if (state.PendingFollowUp is not null) state.Turns.Add(new ChatTurn("assistant", state.PendingFollowUp));
+            state.PendingFollowUp = null;
+            state.PendingReplyIndex = 0;
             state.Turns = state.Turns.TakeLast(8).ToList();
             state.ProcessedMessages.Add(message.Id);
             state.ProcessedMessages = state.ProcessedMessages.TakeLast(100).ToList();
