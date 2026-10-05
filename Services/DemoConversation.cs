@@ -29,10 +29,11 @@ public static class DemoConversation
         if (NameConversation.IsRequest(text)) return false;
         var question = Regex.IsMatch(clean, @"^(كيف|وش|ايش|هل|متى|ليش|ما|ماهي|ماهو|كم رسوم)\b");
         var transfer = !question && Regex.IsMatch(clean, @"(?:\b(?:حول|احول|تحويل)\b|(?:مثال|تجربة|جرب|نجرب).*تحويل)");
-        var shopping = !question && Regex.IsMatch(clean, @"(?:\b(?:ابحث|دور|ادور|اشتري|ادفع)\b|(?:مثال|تجربة|جرب|نجرب).*(?:دفع|شراء|بحث))");
+        var shopping = !question && Regex.IsMatch(clean, @"(?:\b(?:ابحث|دور|ادور|اشتري|ادفع|دفع|شراء)\b|(?:مثال|تجربة|جرب|نجرب).*(?:دفع|شراء|بحث))");
         // A fresh explicit request can replace an unfinished or confirmed example.
-        if ((demo is null || demo.Stage == "confirm") && (transfer || shopping))
+        if ((demo is null || demo.Stage == "confirm" || (transfer && demo.Kind != "transfer") || (shopping && demo.Kind != "payment")) && (transfer || shopping))
         {
+            state.PendingFollowUp = null;
             demo = state.Demo = new DemoState { Kind = transfer ? "transfer" : "payment", Stage = transfer ? "recipient" : "product" };
             state.Welcomed = true;
             if (transfer) { state.TransferExamples++; reply = "*مثال تحويل — بدون تنفيذ*\n\nلمين بتحوّل؟ اكتب الاسم أو رقم الجوال، أو شارك جهة الاتصال هنا."; }
@@ -66,7 +67,7 @@ public static class DemoConversation
             var match = Regex.Match(normalized, @"^\s*(\d{1,7}(?:\.\d{1,2})?)\s*(?:ريال(?: سعودي)?|ر\.س|SAR)?\s*$", RegexOptions.IgnoreCase);
             if (!match.Success || !decimal.TryParse(match.Groups[1].Value, CultureInfo.InvariantCulture, out var amount) || amount <= 0)
             { reply = "المبالغ بالريال السعودي فقط. اكتب مثلًا: 100 ريال سعودي."; return true; }
-            demo.Summary = $"*العملية:* تحويل تجريبي\n*المستفيد:* {demo.Recipient}\n*المبلغ:* {amount.ToString("0.00", CultureInfo.InvariantCulture)} ريال سعودي";
+            demo.Summary = $"*العملية:* تحويل تجريبي\n*الحساب المصدر:* حساب ري باي (افتراضي للمثال)\n*المستفيد:* {demo.Recipient}\n*المبلغ:* {amount.ToString("0.00", CultureInfo.InvariantCulture)} ريال سعودي";
             demo.Stage = "confirm";
             reply = $"*ملخص التحويل*\n\n{demo.Summary}\n\n_مثال توضيحي، ما تم تحويل أي مبلغ._";
             state.PendingFollowUp = "هل تؤكد هذا المثال؟\nاكتب *تأكيد* أو *إلغاء*. بعدها نبدأ طلبًا جديدًا، بدون تنفيذ مالي.";
@@ -82,7 +83,7 @@ public static class DemoConversation
         if (product.Length > 250 || Regex.IsMatch(product, @"^(نعم|ايه|تمام|طيب)$"))
         { reply = "اكتب اسم المنتج اللي تبيه للمثال."; return true; }
         demo.Product = SafeText(product);
-        demo.Summary = $"*العملية:* شراء تجريبي\n*المنتج وطلبك:* {demo.Product}\n*نطاق البحث المقترح:* الشركات السعودية أو المتاجر التي تخدم السعودية؛ يُقدّم متجرك المحدد إن ذكرته\n*مبلغ توضيحي فقط:* 100.00 ريال سعودي (ليس سعر المنتج)";
+        demo.Summary = $"*العملية:* شراء تجريبي\n*الحساب المصدر:* حساب ري باي (افتراضي للمثال)\n*المنتج وطلبك:* {demo.Product}\n*نطاق البحث المقترح:* الشركات السعودية أو المتاجر التي تخدم السعودية؛ يُقدّم متجرك المحدد إن ذكرته\n*مبلغ توضيحي فقط:* 100.00 ريال سعودي (ليس سعر المنتج)";
         demo.Stage = "confirm";
         state.PaymentExamples++;
         reply = $"*مثال على طلبك*\n\n{demo.Summary}\n\nالفكرة أدور لك غرضك وأجهّز الشراء، وأعرض التفاصيل والسعر النهائي لموافقتك؛ ما يشترط تكاملًا مباشرًا مع المتجر.\n\n_هنا ما صار بحث أو شراء أو دفع فعلي._";

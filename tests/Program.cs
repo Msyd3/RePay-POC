@@ -19,16 +19,16 @@ var app = new WhatsAppOrchestrator(meta, router, store);
 string Payload(string id, string text, string phone = "966500000001") => JsonSerializer.Serialize(new { entry = new[] { new { changes = new[] { new { value = new { messages = new[] { new { id, from = phone, text = new { body = text } } } } } } } } });
 void Check(bool ok, string label) { if (!ok) throw new Exception(label); Console.WriteLine("PASS " + label); }
 await app.HandleAsync(Payload("m1", "مرحبا"), default);
-Check(handler.Replies.Last() == ServiceConversation.Welcome, "Arabic welcome with no footer");
+Check(handler.Replies.Last() == ConversationLifecycle.Format(ServiceConversation.Welcome), "Arabic welcome with no footer");
 await app.HandleAsync(Payload("m2", "وش الخدمات؟"), default);
 Check(provider.Calls == 1, "Questions during onboarding do not become a name");
-await app.HandleAsync(Payload("m3", "اسمي محمد"), default);
+await app.HandleAsync(Payload("m3", "اسمي محمد السالم"), default);
 Check(handler.Replies.Last().Contains("محمد"), "Name extracted and saved");
 var restarted = new ConversationStore(options, env);
 await restarted.InitializeAsync();
 app = new WhatsAppOrchestrator(meta, router, restarted);
 await app.HandleAsync(Payload("m4", "هل تقدر تحول الآن؟"), default);
-Check(JsonDocument.Parse(provider.LastInput).RootElement.GetProperty("name").GetString() == "محمد" && !provider.LastInput.Contains("966500000001"), "Restart preserves name without passing phone to AI");
+Check(JsonDocument.Parse(provider.LastInput).RootElement.GetProperty("name").GetString() == "محمد السالم" && !provider.LastInput.Contains("966500000001"), "Restart preserves name without passing phone to AI");
 var count = handler.Replies.Count;
 await app.HandleAsync(Payload("m4", "هل تقدر تحول الآن؟"), default);
 Check(handler.Replies.Count == count, "Duplicate message ignored across persisted state");
@@ -42,15 +42,15 @@ Check(request.RootElement.GetProperty("model").GetString() == ServiceConversatio
 Check(!ServiceConversation.TryGetName("123456", out _) && !ServiceConversation.TryGetName("مرحبا", out _), "Numbers and greetings rejected as names");
 await Task.WhenAll(app.HandleAsync(Payload("m7", "شكرا"), default), app.HandleAsync(Payload("m7", "شكرا"), default));
 Check(handler.Replies.Count == count + 3, "Concurrent duplicate serialized");
-await app.HandleAsync(Payload("m8", "غير اسمي إلى خالد"), default);
+await app.HandleAsync(Payload("m8", "غير اسمي إلى خالد العلي"), default);
 Check(handler.Replies.Last().Contains("خالد"), "Direct rename acknowledged");
 await app.HandleAsync(Payload("m9", "ابي اغير اسمي"), default);
-Check(handler.Replies.Last().Contains("وش الاسم"), "Rename without name asks once");
-await app.HandleAsync(Payload("m10", "ناصر"), default);
+Check(handler.Replies.Last().Contains("الثنائي"), "Rename without name asks once");
+await app.HandleAsync(Payload("m10", "ناصر العلي"), default);
 var renamedStore = new ConversationStore(options, env);
 await renamedStore.InitializeAsync();
 await using (var saved = await renamedStore.OpenSessionAsync("966500000001", default))
-    Check(saved.State.Name == "ناصر" && !saved.State.AwaitingNameChange, "Follow-up rename persisted after restart");
+    Check(saved.State.Name == "ناصر العلي" && !saved.State.AwaitingNameChange, "Follow-up rename persisted after restart");
 await app.HandleAsync(Payload("m11", "كيف التحويل؟"), default);
 var turns = ServiceConversation.ModelTurns(provider.LastInput);
 Check(turns.Last().Text == "كيف التحويل؟" && turns.Any(t => t.Role == "assistant"), "Real role history and current question preserved");
@@ -83,11 +83,11 @@ await using (var retryState = await restarted.OpenSessionAsync("966500000001", d
     Check(retryState.State.TransferExamples == 2 && retryState.State.Demo?.Stage == "recipient", "Failed delivery retry reuses summary without double-counting or advancing");
 Check(!DemoConversation.TryReply(new ConversationState(), "ما دوركم؟", out _), "Service questions do not start shopping examples");
 await app.HandleAsync(Payload("name-during-demo", "ممكن تغير الاسم؟"), default);
-await app.HandleAsync(Payload("name-followup", "سلمان"), default);
+await app.HandleAsync(Payload("name-followup", "سلمان العلي"), default);
 await app.HandleAsync(Payload("name-read", "وش اسمي؟"), default);
-Check(handler.Replies.Last().Contains("*سلمان*"), "Name update takes priority over active demo and is read back");
-await app.HandleAsync(Payload("name-attached", "غير اسمي لمحمد"), default);
-Check(handler.Replies.Last().Contains("*محمد*"), "Attached Arabic preposition parsed for name update");
+Check(handler.Replies.Last().Contains("*سلمان العلي*"), "Name update takes priority over active demo and is read back");
+await app.HandleAsync(Payload("name-attached", "غير اسمي لمحمد السالم"), default);
+Check(handler.Replies.Last().Contains("*محمد السالم*"), "Attached Arabic preposition parsed for name update");
 await app.HandleAsync(Payload("buy-example", "جرب دفع"), default);
 await app.HandleAsync(Payload("buy-product", "سماعات من متجر سعودي"), default);
 Check(handler.Replies[^2].Contains("سماعات") && handler.Replies.Last().Contains("تؤكد"), "Product immediately produces summary plus separate confirmation prompt");
@@ -97,7 +97,7 @@ await using (var confirmed = await restarted.OpenSessionAsync("966500000001", de
     Check(confirmed.State.Demo is null, "Confirmation clears persisted demo state");
 using var maskedStats = JsonDocument.Parse(JsonSerializer.Serialize(await restarted.AnalyticsAsync(default)));
 var userRow = maskedStats.RootElement.GetProperty("userList")[0];
-Check(userRow.GetProperty("lastFour").GetString() == "0001" && userRow.GetProperty("name").GetString() == "محمد" && !maskedStats.RootElement.ToString().Contains("966500000001"), "Analytics exposes name and only last four digits");
+Check(userRow.GetProperty("lastFour").GetString() == "0001" && userRow.GetProperty("name").GetString() == "محمد السالم" && !maskedStats.RootElement.ToString().Contains("966500000001"), "Analytics exposes name and only last four digits");
 await app.HandleAsync(Payload("follow-retry-start", "جرب شراء"), default);
 handler.FailAfter = 1;
 try { await app.HandleAsync(Payload("follow-retry-product", "جوال"), default); } catch (HttpRequestException) { }
@@ -107,6 +107,25 @@ Check(handler.Replies.Count == beforeRetry + 1 && handler.Replies.Last().Contain
 var currencyState = new ConversationState { Demo = new DemoState { Kind = "transfer", Stage = "amount", Recipient = "خالد" } };
 DemoConversation.TryReply(currencyState, "100 دولار", out var currencyReply);
 Check(currencyState.Demo.Stage == "amount" && currencyReply.Contains("السعودي فقط"), "Non-SAR amount rejected rather than relabelled");
+var switching = new ConversationState { Name = "محمد السالم" };
+DemoConversation.TryReply(switching, "جرب تحويل", out _);
+DemoConversation.TryReply(switching, "خالد العلي", out _);
+DemoConversation.TryReply(switching, "ابي اشتري جوال", out var switchedReply);
+Check(switching.Demo?.Kind == "payment" && switchedReply.Contains("جوال"), "Switch from transfer amount to purchase preserves product");
+DemoConversation.TryReply(switching, "ابي احول", out _);
+Check(switching.Demo?.Kind == "transfer" && switching.Demo.Stage == "recipient", "Switch from purchase to transfer clears previous details");
+NameConversation.TryReply(switching, "ابغى اغير اسمي", out _);
+NameConversation.TryReply(switching, "محمد", out var shortNameReply);
+Check(switching.AwaitingNameChange && shortNameReply.Contains("الثنائي"), "Single name rejected while retaining name edit flow");
+NameConversation.TryReply(switching, "محمد العلي", out _);
+Check(switching.Name == "محمد العلي" && !switching.AwaitingNameChange && switching.Demo is null, "Full name saved while cancelling stale demo");
+var instant = DateTimeOffset.UtcNow;
+switching.LastMessageAt = instant.AddMinutes(-5);
+switching.Demo = new DemoState { Kind = "transfer", Stage = "amount" };
+switching.Turns.Add(new ChatTurn("user", "old context"));
+Check(ConversationLifecycle.Expire(switching, instant) && switching.Demo is null && switching.Turns.Count == 0 && switching.Name == "محمد العلي", "Five-minute reset clears conversation but preserves identity");
+Check(ConversationLifecycle.Format("مثال.\n*100.00 ريال سعودي*\nhttps://repay.sa") == "مثال\n*100.00 ريال سعودي*\nhttps://repay.sa", "Formatting removes terminal periods without altering amounts or URLs");
+Check(demoState.Demo?.Summary?.Contains("حساب ري باي") == true, "Summary includes illustrative source account");
 Console.WriteLine("All conversation checks passed.");
 
 sealed class TestProvider : IAgentProvider

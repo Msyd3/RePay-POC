@@ -12,7 +12,7 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
         {
             if (!Regex.IsMatch(message.Phone, @"^9665[0-9]{8}$"))
             {
-                await whatsapp.SendTextAsync(message.Phone, "خدمة ري باي متاحة حاليًا للأرقام السعودية فقط.", ct);
+                await whatsapp.SendTextAsync(message.Phone, "خدمة ري باي متاحة حاليًا للأرقام السعودية فقط", ct);
                 continue;
             }
             await using var session = await store.OpenSessionAsync(message.Phone, ct);
@@ -20,16 +20,11 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             if (state.ProcessedMessages.Contains(message.Id)) continue;
             string reply;
             var retry = state.PendingMessageId == message.Id && state.PendingReply is not null;
-            if (!retry) { state.PendingFollowUp = null; state.PendingReplyIndex = 0; }
+            if (!retry) { ConversationLifecycle.Expire(state, DateTimeOffset.UtcNow); state.PendingFollowUp = null; state.PendingReplyIndex = 0; }
             if (retry)
                 reply = state.PendingReply!;
             else if (NameConversation.TryReply(state, message.Text, out var nameReply))
                 reply = nameReply;
-            else if (DemoConversation.TryReply(state, message.Text, out var demoReply))
-            {
-                state.Welcomed = true;
-                reply = demoReply;
-            }
             else if (!state.Welcomed && state.Name is null)
             {
                 reply = ServiceConversation.Welcome;
@@ -37,8 +32,26 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             }
             else if (state.Name is null && ServiceConversation.TryGetName(message.Text, out var name))
             {
-                state.Name = name;
-                reply = $"تشرفنا يا {name}، وش حاب تعرف عن ري باي؟";
+                if (NameConversation.TryFullName(name, out var fullName))
+                {
+                    state.Name = fullName;
+                    reply = $"تشرفنا يا {fullName}، وش حاب نجرب؟";
+                }
+                else
+                {
+                    state.AwaitingNameChange = true;
+                    reply = "ممكن اسمك الثنائي؟ الاسم الأول واسم العائلة";
+                }
+            }
+            else if (state.Name is not null && !NameConversation.TryFullName(state.Name, out _))
+            {
+                state.AwaitingNameChange = true;
+                reply = "عشان نحدّث بياناتك، ممكن اسمك الثنائي؟ الاسم الأول واسم العائلة";
+            }
+            else if (DemoConversation.TryReply(state, message.Text, out var demoReply))
+            {
+                state.Welcomed = true;
+                reply = demoReply;
             }
             else
             {
@@ -51,6 +64,8 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
                     reply = "تعذّر عليّ الرد الآن، جرّب ترسل سؤالك مرة ثانية.";
                 }
             }
+            reply = ConversationLifecycle.Format(reply);
+            if (state.PendingFollowUp is not null) state.PendingFollowUp = ConversationLifecycle.Format(state.PendingFollowUp);
             // Persist the generated reply and demo transition, so retries do not advance the example twice.
             state.PendingMessageId = message.Id;
             state.PendingReply = reply;
@@ -68,7 +83,7 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
                 await session.SaveAsync(ct);
             }
             var now = DateTimeOffset.UtcNow;
-            if (state.LastMessageAt is null || now - state.LastMessageAt > TimeSpan.FromMinutes(30)) state.ConversationCount++;
+            if (state.LastMessageAt is null || now - state.LastMessageAt >= ConversationLifecycle.IdleTimeout) state.ConversationCount++;
             state.LastMessageAt = now;
             state.MessageCount++;
             state.PendingMessageId = null;
