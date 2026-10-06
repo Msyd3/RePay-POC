@@ -19,7 +19,7 @@ var app = new WhatsAppOrchestrator(meta, router, store);
 string Payload(string id, string text, string phone = "966500000001") => JsonSerializer.Serialize(new { entry = new[] { new { changes = new[] { new { value = new { messages = new[] { new { id, from = phone, text = new { body = text } } } } } } } } });
 void Check(bool ok, string label) { if (!ok) throw new Exception(label); Console.WriteLine("PASS " + label); }
 await app.HandleAsync(Payload("m1", "مرحبا"), default);
-Check(handler.Replies.Last() == ConversationLifecycle.Format(ServiceConversation.Welcome), "Arabic welcome with no footer");
+Check(handler.Replies.Last().Contains("اسمك") && !handler.Replies.Last().Contains("ري باي المالية"), "Arabic welcome asks for name with no footer");
 await app.HandleAsync(Payload("m2", "وش الخدمات؟"), default);
 Check(provider.Calls == 1, "Questions during onboarding do not become a name");
 await app.HandleAsync(Payload("m3", "اسمي محمد السالم"), default);
@@ -135,6 +135,15 @@ Check(await AnalyticsEndpoints.GetAsync(httpContext, phoneOptions, restarted) is
 httpContext.Request.Headers.Authorization = "Bearer 0500000002";
 Check(await AnalyticsEndpoints.GetAsync(httpContext, phoneOptions, restarted) is Microsoft.AspNetCore.Http.HttpResults.UnauthorizedHttpResult, "Phone login rejects other numbers");
 
+foreach (var casual in new[] { "هلا حبيبي", "هلا والله", "السلام عليكم", "صباح الخير", "كيف حالك", "ابي احول", "ما عندي", "شكرا لك", "hello there", "ادور جوال" })
+    Check(!ServiceConversation.TryGetName(casual, out _) && !NameConversation.TryFullName(casual, out _), "Conversation is not a name: " + casual);
+Check(ServiceConversation.TryGetName("محمد", out _) && !NameConversation.TryFullName("محمد", out _), "First name is recognized but needs family name");
+Check(NameConversation.TryFullName("محمد العلي", out _), "Full name remains supported");
+var pendingRename = new ConversationState { Name = "محمد العلي", AwaitingNameChange = true, Welcomed = true };
+NameConversation.TryReply(pendingRename, "هلا حبيبي", out var greetingReply);
+Check(pendingRename.Name == "محمد العلي" && pendingRename.AwaitingNameChange && greetingReply.Contains("يا هلا"), "Greeting during rename preserves saved identity and pending name request");
+NameConversation.TryReply(pendingRename, "اسمي هلا حبيبي", out _);
+Check(pendingRename.Name == "محمد العلي", "Explicit prefix cannot turn greeting into saved name");
 Console.WriteLine("All conversation checks passed.");
 
 sealed class TestProvider : IAgentProvider

@@ -26,6 +26,16 @@ public static class NameConversation
             state.Welcomed = true;
             return true;
         }
+        if (state.Welcomed && ServiceConversation.IsCasualMessage(input)
+            && !Regex.IsMatch(text, @"\b(?:تحويل|دفع|شراء|خدمات|خدمة|ابي|ابغى|احول|اشتري|ادفع|وش|ايش|هل|كم|متى)\b"))
+        {
+            // A greeting never overwrites identity, including while waiting for a replacement name.
+            reply = state.AwaitingNameChange || state.Name is null
+                ? "يا هلا فيك 👋🏼 ممكن اسمك الأول واسم العائلة؟"
+                : "يا هلا فيك 👋🏼 وش أقدر أساعدك فيه؟";
+            state.Welcomed = true;
+            return true;
+        }
         if (state.AwaitingNameChange)
         {
             if (TryFullName(input, out var name))
@@ -40,7 +50,7 @@ public static class NameConversation
     {
         name = input.Trim();
         if (Regex.IsMatch(Normalize(name), @"^(?:لا|مو|مش|ما|غير|الاسم|اسمي|ابي|ابغى|اريد|خلاص|عادي|اكيد|نعم|ايه|تمام|طيب)\b")) return false;
-        if (Regex.IsMatch(Normalize(name), @"(?:احول|حول|تحويل|ادفع|دفع|شراء|اشتري|جرب|نجرب|منتج|ابحث|دور|كم|كيف|وش|ايش|هل|متى)")) return false;
+        if (Regex.IsMatch(Normalize(name), @"\b(?:احول|حول|تحويل|ادفع|دفع|شراء|اشتري|جرب|نجرب|منتج|ابحث|دور|كم|كيف|وش|ايش|هل|متى)\b")) return false;
         return ServiceConversation.TryGetName(name, out name) && name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length >= 2;
     }
 }

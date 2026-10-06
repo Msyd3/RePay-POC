@@ -48,7 +48,17 @@ public static class ServiceConversation
     {
         name = Regex.Replace(input.Trim(), @"^(اسمي|أنا اسمي|انا اسمي|أنا|انا|my name is|I'm)\s+", "", RegexOptions.IgnoreCase).Trim();
         if (name.Length is < 2 or > 60 || !Regex.IsMatch(name, @"^[\p{L}\p{M}]+(?:[ '\-][\p{L}\p{M}]+){0,3}$")) return false;
-        var nonNames = new[] { "مرحبا", "مرحبًا", "السلام عليكم", "هلا", "اهلا", "أهلا", "اختبار", "نعم", "لا", "تمام", "شكرا", "شكرًا", "hello", "hi", "test", "ايه", "طيب", "غير اسمي", "تحويل", "دفع", "مثال", "غيره", "غيرها" };
-        return !nonNames.Contains(name, StringComparer.OrdinalIgnoreCase) && !Regex.IsMatch(name, @"^(وش|ايش|كيف|متى|هل|ما هي|ماهي|ابغى|أبغى|ابي|أبي|اريد|أريد|what|how|when)\b", RegexOptions.IgnoreCase);
+        // Evaluate words and phrases, not just exact messages: "هلا حبيبي" is a greeting too.
+        var normalized = NameConversation.Normalize(name).ToLowerInvariant();
+        return !IsCasualMessage(normalized) && !Regex.IsMatch(normalized,
+            @"\b(?:اختبار|نعم|لا|تمام|ايه|طيب|اكيد|اوكي|خلاص|عادي|غير|غيره|غيرها|تحويل|دفع|مثال|شراء|منتج|احول|حول|ادفع|اشتري|ابحث|دور|ادور|جرب|نجرب|ابي|ابغى|اريد|احتاج|عندي|عندك|ممكن|وش|ايش|كيف|متى|هل|ليش|وين|كم|ماهي|ماهو|يسوي|يشتغل|فاهم|فهمت|تقدر|تعرف|مو|مش|what|how|when|yes|no|test|thanks|please|want|need)\b", RegexOptions.IgnoreCase)
+            && !Regex.IsMatch(normalized, @"^(?:ما|انا|انت|هذا|هذه|والدفع|والتحويل|والشراء)\b");
+    }
+
+    public static bool IsCasualMessage(string input)
+    {
+        var text = NameConversation.Normalize(input).ToLowerInvariant();
+        return Regex.IsMatch(text, @"\b(?:هلا|هلاا+|اهلا|اهلين|مرحبا|مرحبتين|حبيبي|حبيبتي|الغالي|يا|شكرا|مشكور|تسلم|يعطيك|العافية|hello|hi|hey|thanks)\b")
+            || Regex.IsMatch(text, @"^(?:السلام|وعليكم|صباح|مساء|كيفك|شلونك|شخبارك|الله يعافيك|الله يسلمك|جزاك الله)\b");
     }
 }
