@@ -17,14 +17,18 @@ public static class WebhookEndpoints
     }
 
     public static async Task<IResult> ReceiveAsync(HttpRequest request, IOptions<RePayOptions> options,
-        WhatsAppOrchestrator orchestrator, ILoggerFactory loggerFactory)
+        WhatsAppOrchestrator orchestrator, ILoggerFactory loggerFactory, IHostApplicationLifetime lifetime)
     {
         using var bodyReader = new StreamReader(request.Body, Encoding.UTF8);
         var rawBody = await bodyReader.ReadToEndAsync();
         if (!IsValidSignature(request.Headers["X-Hub-Signature-256"], rawBody, options.Value.MetaAppSecret))
             return Results.Unauthorized();
 
-        try { await orchestrator.HandleAsync(rawBody, request.HttpContext.RequestAborted); }
+        // Finish sending and recording the reply even if Meta disconnects while waiting.
+        // Otherwise a successful send can be retried because its delivery checkpoint was cancelled.
+        using var processing = CancellationTokenSource.CreateLinkedTokenSource(lifetime.ApplicationStopping);
+        processing.CancelAfter(TimeSpan.FromSeconds(60));
+        try { await orchestrator.HandleAsync(rawBody, processing.Token); }
         catch (Exception ex)
         {
             loggerFactory.CreateLogger("Webhook").LogError(ex, "Webhook handling failed");
