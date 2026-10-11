@@ -9,7 +9,8 @@ public static class ConversationIntent
 {
     public const string Instructions = """
         أنت موجّه نية محادثة ري باي، وليس منفذ تحويل أو دفع. اقرأ آخر رسالة مع الأدوار السابقة وحالة المحادثة. أرجع JSON فقط {"action":"...","value":null} دون شرح.
-        الأفعال المسموحة: continue, rename, start_transfer, start_payment, edit_recipient, edit_amount, edit_product, cancel, question, new_topic, clarify.
+        الأفعال المسموحة: continue, rename, start_transfer, start_payment, edit_recipient, edit_amount, edit_product, edit_budget, clear_budget, cancel, question, new_topic, clarify.
+        في الشراء لا تطلب المبلغ: المنتج يكفي والنظام يختار سعر المثال. الميزانية اختيارية فقط إذا ذكرها المستخدم. تعديل مبلغ الشراء = edit_budget، وإلغاء شرط الميزانية = clear_budget. edit_amount خاص بالتحويل فقط.
         rename يغيّر اسم صاحب الحساب فقط. edit_recipient يغيّر مستفيد التحويل. لا تخلط بينهما.
         آخر طلب المستخدم يتقدم على المسار الحالي. "لا ابي ادفع بدل التحويل" = start_payment. "ما ابي احول" = cancel وليس start_transfer. "ابي احول لواحد ثاني" = start_transfer. "وقف خلنا نتكلم عن الخدمات" = new_topic.
         "ابي اعدله" بعد الكلام عن اسمه المحفوظ = rename؛ بعد الكلام عن المستفيد = edit_recipient؛ بعد المبلغ = edit_amount. إذا كانت الإشارة تحتمل أكثر من شيء = clarify. لا تحوّل الجملة إلى اسم مستفيد أو منتج.
@@ -21,7 +22,7 @@ public static class ConversationIntent
         """;
 
     private static readonly HashSet<string> Actions = ["continue", "rename", "start_transfer", "start_payment",
-        "edit_recipient", "edit_amount", "edit_product", "cancel", "question", "new_topic", "clarify"];
+        "edit_recipient", "edit_amount", "edit_product", "edit_budget", "clear_budget", "cancel", "question", "new_topic", "clarify"];
 
     public static IntentDecision? Parse(string output)
     {

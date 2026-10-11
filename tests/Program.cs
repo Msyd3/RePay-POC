@@ -293,6 +293,38 @@ Check(recipientEdit.Demo?.Recipient == "خالد العلي" && recipientEdit.Aw
 var pendingProfile = new ConversationState { Name = "محمد العلي", Welcomed = true, AwaitingNameChange = true };
 await Route(pendingProfile, "غيرت رايي ابي ادفع", "start_payment");
 Check(!pendingProfile.AwaitingNameChange && pendingProfile.Name == "محمد العلي" && pendingProfile.Demo?.Kind == "payment", "Natural change-of-mind interrupts profile collection without overwriting name");
+var purchase = new ConversationState { Name = "محمد العلي", Welcomed = true };
+await Route(purchase, "ابي اشتري جوال", "start_payment");
+Check(purchase.Demo?.Amount == 2000 && purchase.Demo.Budget is null && purchase.Demo.Stage == "confirm"
+    && !purchase.Demo.Summary!.Contains("كم") && !purchase.Demo.Summary.Contains("ميزانيتك"), "Product-only purchase chooses illustrative price without asking an amount");
+await Route(purchase, "بميزانية ٢٠٠٠ ريال", "edit_budget");
+Check(purchase.Demo?.Budget == 2000 && purchase.Demo.Amount == 2000 && purchase.Demo.Summary!.Contains("يطابق"), "Explicit Arabic budget chooses exact synthetic option");
+await Route(purchase, "بمبلغ ٢١٠٠ ريال", "edit_budget");
+Check(purchase.Demo?.Amount == 2000 && purchase.Demo.Summary!.Contains("100.00") && purchase.Demo.Summary.Contains("أقل من ميزانيتك"), "Missing exact price selects nearest option and states difference");
+await Route(purchase, "بميزانية 1700", "edit_budget");
+Check(purchase.Demo?.Amount == 1800 && purchase.Demo.Summary!.Contains("أعلى من ميزانيتك") && purchase.PendingFollowUp is not null, "Nearby option above target is disclosed and offered for confirmation");
+await Route(purchase, "حد اقصى 1700", "edit_budget");
+Check(purchase.Demo?.Amount is null && purchase.Demo?.Summary is null && purchase.PendingFollowUp is null
+    && purchase.Demo?.Stage == "product", "Hard ceiling cannot silently exceed budget or retain old confirmation");
+await Route(purchase, "تأكيد", "continue");
+Check(purchase.Demo?.Stage == "product" && purchase.Demo.Summary is null, "Unmatched budget cannot confirm stale purchase summary");
+await Route(purchase, "بدون ميزانية محددة", "clear_budget");
+Check(purchase.Demo?.Budget is null && purchase.Demo?.Amount == 2000, "Removing optional budget restores automatic example price");
+await Route(purchase, "ابي احول", "start_transfer");
+Check(purchase.Demo?.Budget is null && purchase.Demo?.Amount is null && purchase.Demo?.Stage == "recipient", "Switching to transfer discards purchase budget and price");
+var budgetFirst = new ConversationState { Welcomed = true, Name = "محمد العلي" };
+await Route(budgetFirst, "ابي اشتري بميزانية 2000", "start_payment");
+Check(budgetFirst.Demo?.Product is null && budgetFirst.Demo?.Budget == 2000 && budgetFirst.Demo?.Stage == "product", "Budget without product asks only for product and does not treat amount as item");
+await Route(budgetFirst, "جوال", "continue", "جوال");
+Check(budgetFirst.Demo?.Amount == 2000 && budgetFirst.Demo?.Budget == 2000, "Budget-first purchase retains constraint for subsequent product");
+Check(!PurchaseExample.TryBudget("ايفون 16", out _, out _, out _) && PurchaseExample.Select("ايفون 16", null, false) == 2000, "Model number is not mistaken for a budget");
+await using (var savedBudget = await restarted.OpenSessionAsync("966500000004", default))
+{
+    savedBudget.State.Demo = budgetFirst.Demo;
+    await savedBudget.SaveAsync(default);
+}
+await using (var savedBudget = await new ConversationStore(options, env).OpenSessionAsync("966500000004", default))
+    Check(savedBudget.State.Demo?.Budget == 2000 && savedBudget.State.Demo.Amount == 2000, "Optional budget and selected example price survive store restart");
 Console.WriteLine("All conversation checks passed.");
 
 sealed class TestProvider : IAgentProvider
