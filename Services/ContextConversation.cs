@@ -8,6 +8,13 @@ public static class ContextConversation
     public static async Task<string> ReplyAsync(ConversationState state, string input, AgentRouter agent, CancellationToken ct)
     {
         var text = NameConversation.Normalize(input);
+        if (state.Demo?.Kind == "payment" && PurchaseExample.TryBudget(input, out var purchaseBudget, out var budgetCeiling, out var onlyBudget) && onlyBudget)
+        {
+            state.Demo.Budget = purchaseBudget;
+            state.Demo.BudgetCeiling = budgetCeiling;
+            state.AwaitingClarification = false;
+            return PurchaseSummary(state, state.Demo);
+        }
         if (state.AwaitingClarification && Regex.IsMatch(text, @"^(?:اسمي|اسم الحساب|اسم صاحب الحساب)$"))
         {
             ResetTask(state);
@@ -98,6 +105,20 @@ public static class ContextConversation
                         "edit_amount" => "تمام، كم المبلغ الجديد بالريال السعودي؟",
                         _ => "تمام، وش المنتج الجديد؟"
                     };
+                case "clear_budget":
+                    if (state.Demo?.Kind != "payment") return Clarify(state);
+                    state.Demo.Budget = null;
+                    state.Demo.BudgetCeiling = false;
+                    state.AwaitingClarification = false;
+                    return PurchaseSummary(state, state.Demo);
+                case "edit_budget":
+                    if (state.Demo?.Kind != "payment"
+                        || !PurchaseExample.TryBudget(input, out var budget, out var limit, out _)
+                            && !PurchaseExample.TryBudget(decision.Value ?? "", out budget, out limit, out _)) return Clarify(state);
+                    state.Demo.Budget = budget;
+                    state.Demo.BudgetCeiling = limit;
+                    state.AwaitingClarification = false;
+                    return PurchaseSummary(state, state.Demo);
                 case "continue":
                     if (state.AwaitingClarification && Regex.IsMatch(text, @"^(?:تاكيد|اكد|نعم|تمام|ايه|اكيد|موافق)$")) return Clarify(state);
                     state.AwaitingClarification = false;
@@ -151,11 +172,18 @@ public static class ContextConversation
         name = state.Name,
         conversationState = new { focus = state.Focus, awaitingName = state.AwaitingNameChange, awaitingClarification = state.AwaitingClarification,
             task = state.Demo is null ? null : new { kind = state.Demo.Kind, stage = state.Demo.Stage,
-                recipient = Redact(state.Demo.Recipient ?? ""), product = Redact(state.Demo.Product ?? ""), amount = state.Demo.Amount } },
+                recipient = Redact(state.Demo.Recipient ?? ""), product = Redact(state.Demo.Product ?? ""), amount = state.Demo.Amount,
+                budget = state.Demo.Budget, budgetCeiling = state.Demo.BudgetCeiling } },
         recentConversation = state.Turns.TakeLast(8).Select(t => new ChatTurn(t.Role, Redact(t.Text))),
         currentMessage = Redact(input)
     });
     private static string Redact(string text) => Regex.Replace(text, @"[+＋]?[0-9٠-٩۰-۹][0-9٠-٩۰-۹ ()-]{7,}[0-9٠-٩۰-۹]", "[رقم جوال]");
+    private static string PurchaseSummary(ConversationState state, DemoState demo)
+    {
+        state.Focus = "payment";
+        DemoConversation.RebuildPurchase(state, demo, out var reply);
+        return reply;
+    }
     private static async Task<string> AnswerAsync(ConversationState state, string input, AgentRouter agent, CancellationToken ct)
     {
         try { return await agent.ReplyAsync(Context(state, input), ct); }

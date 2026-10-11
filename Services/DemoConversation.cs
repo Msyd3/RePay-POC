@@ -10,6 +10,8 @@ public sealed class DemoState
     public string? Product { get; set; }
     public string? Summary { get; set; }
     public decimal? Amount { get; set; }
+    public decimal? Budget { get; set; }
+    public bool BudgetCeiling { get; set; }
 }
 
 public static class DemoConversation
@@ -76,12 +78,39 @@ public static class DemoConversation
         return false;
     }
 
-    private static bool PurchaseSummary(ConversationState state, DemoState demo, string product, out string reply)
+    public static bool PurchaseSummary(ConversationState state, DemoState demo, string product, out string reply)
     {
-        if (product.Length > 250 || Regex.IsMatch(product, @"^(نعم|ايه|تمام|طيب)$"))
+        if (product.Length > 250 || Regex.IsMatch(NameConversation.Normalize(product), @"^(نعم|ايه|تمام|طيب|تاكيد|اكد|موافق)$"))
         { reply = "اكتب اسم المنتج اللي تبيه للمثال."; return true; }
+        if (PurchaseExample.TryBudget(product, out var requestedBudget, out var ceiling, out var onlyBudget))
+        {
+            demo.Budget = requestedBudget; demo.BudgetCeiling = ceiling;
+            if (onlyBudget) return RebuildPurchase(state, demo, out reply);
+        }
         demo.Product = SafeText(product);
-        demo.Summary = $"*العملية:* شراء تجريبي\n*الحساب المصدر:* حساب ري باي (افتراضي للمثال)\n*المنتج وطلبك:* {demo.Product}\n*مبلغ توضيحي فقط:* 100.00 ريال سعودي (ليس سعر المنتج)";
+        return RebuildPurchase(state, demo, out reply);
+    }
+    public static bool RebuildPurchase(ConversationState state, DemoState demo, out string reply)
+    {
+        state.PendingFollowUp = null;
+        demo.Summary = null;
+        demo.Amount = null;
+        if (demo.Product is null)
+        { demo.Stage = "product"; reply = "تمام، وش المنتج اللي تبيه؟"; return true; }
+        var price = PurchaseExample.Select(demo.Product, demo.Budget, demo.BudgetCeiling);
+        if (price is null)
+        {
+            demo.Stage = "product";
+            reply = "في خيارات المثال ما فيه سعر قريب من ميزانيتك\nتبي نغيّر المنتج أو المواصفات؟ ما راح أفترض مبلغًا جديدًا";
+            return true;
+        }
+        demo.Amount = price;
+        var amount = price.Value.ToString("0.00", CultureInfo.InvariantCulture);
+        var budgetLine = demo.Budget is null ? "" : $"\n*ميزانيتك:* {demo.Budget.Value.ToString("0.00", CultureInfo.InvariantCulture)} ريال سعودي";
+        var choice = demo.Budget is null ? "اخترت مبلغ المثال تلقائيًا"
+            : price == demo.Budget ? "خيار المثال يطابق المبلغ اللي طلبته"
+            : $"أقرب خيار في المثال، الفرق {Math.Abs(price.Value - demo.Budget.Value).ToString("0.00", CultureInfo.InvariantCulture)} ريال " + (price > demo.Budget ? "أعلى من ميزانيتك، يحتاج موافقتك" : "أقل من ميزانيتك");
+        demo.Summary = $"*العملية:* شراء تجريبي\n*الحساب المصدر:* حساب ري باي (افتراضي للمثال)\n*المنتج وطلبك:* {demo.Product}{budgetLine}\n*مبلغ توضيحي فقط:* {amount} ريال سعودي (ليس سعرًا فعليًا للمنتج)\n{choice}";
         demo.Stage = "confirm";
         state.PaymentExamples++;
         reply = $"*مثال على طلبك*\n\n{demo.Summary}\n\nالفكرة أدور لك غرضك وأجهّز الشراء، وأعرض التفاصيل والسعر النهائي لموافقتك؛ ما يشترط تكاملًا مباشرًا مع المتجر.\n\n_هنا ما صار بحث أو شراء أو دفع فعلي._";
