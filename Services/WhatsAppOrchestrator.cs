@@ -35,42 +35,8 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             if (!retry) { ConversationLifecycle.Expire(state, DateTimeOffset.UtcNow); state.PendingFollowUp = null; state.PendingReplyIndex = 0; }
             if (retry)
                 reply = state.PendingReply!;
-            else if (NameConversation.TryReply(state, message.Text, out var nameReply))
-                reply = nameReply;
-            else if (!state.Welcomed && state.Name is null)
-            {
-                reply = ServiceConversation.Welcome;
-                state.Welcomed = true;
-            }
-            else if (state.Name is null && ServiceConversation.TryGetName(message.Text, out var name))
-            {
-                if (NameConversation.TryFullName(name, out var fullName))
-                {
-                    state.Name = fullName;
-                    reply = $"تشرفنا يا {fullName}، وش حاب نجرب؟";
-                }
-                else
-                {
-                    state.AwaitingNameChange = true;
-                    reply = "ممكن اسمك الثنائي؟ الاسم الأول واسم العائلة";
-                }
-            }
-            else if (DemoConversation.TryReply(state, message.Text, out var demoReply))
-            {
-                state.Welcomed = true;
-                reply = demoReply;
-            }
             else
-            {
-                state.AwaitingNameChange = false;
-                // Never pass the phone number to an AI provider. No browser or payment tools are registered.
-                var context = JsonSerializer.Serialize(new { name = state.Name, recentConversation = state.Turns.TakeLast(8).Select(t => new ChatTurn(t.Role, RedactPhone(t.Text))), currentMessage = RedactPhone(message.Text) });
-                try { reply = await agent.ReplyAsync(context, ct); }
-                catch (Exception) when (!ct.IsCancellationRequested)
-                {
-                    reply = "تعذّر عليّ الرد الآن، جرّب ترسل سؤالك مرة ثانية.";
-                }
-            }
+                reply = await ContextConversation.ReplyAsync(state, message.Text, agent, ct);
             reply = ConversationLifecycle.Format(reply);
             if (state.PendingFollowUp is not null) state.PendingFollowUp = ConversationLifecycle.Format(state.PendingFollowUp);
             // Persist the generated reply and demo transition, so retries do not advance the example twice.

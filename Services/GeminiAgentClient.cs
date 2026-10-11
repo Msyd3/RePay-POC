@@ -11,14 +11,17 @@ public sealed class GeminiAgentClient(HttpClient http, IOptions<RePayOptions> op
     public bool IsConfigured => !string.IsNullOrWhiteSpace(_options.GeminiApiKey);
 
 
-    public async Task<string> ReplyAsync(string userText, CancellationToken ct)
+    public Task<string> ReplyAsync(string userText, CancellationToken ct) => CompleteAsync(userText, ServiceConversation.Instructions, false, ct);
+    public Task<string> InterpretAsync(string context, CancellationToken ct) => CompleteAsync(context, ConversationIntent.Instructions, true, ct);
+
+    private async Task<string> CompleteAsync(string userText, string instructions, bool interpret, CancellationToken ct)
     {
         var url = $"https://generativelanguage.googleapis.com/v1beta/models/{_options.GeminiModel}:generateContent?key={Uri.EscapeDataString(_options.GeminiApiKey)}";
         var payload = new
         {
-            systemInstruction = new { parts = new[] { new { text = ServiceConversation.Instructions } } },
+            systemInstruction = new { parts = new[] { new { text = instructions } } },
             contents = ServiceConversation.ModelTurns(userText).Select(t => new { role = t.Role == "assistant" ? "model" : "user", parts = new[] { new { text = t.Text } } }),
-            generationConfig = new { temperature = 0.3 }
+            generationConfig = new { temperature = interpret ? 0.0 : 0.3 }
         };
         var response = await http.PostAsJsonAsync(url, payload, ct);
         response.EnsureSuccessStatusCode();
