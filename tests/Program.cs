@@ -16,7 +16,7 @@ var router = new AgentRouter([provider], NullLogger<AgentRouter>.Instance);
 var store = new ConversationStore(options, env);
 await store.InitializeAsync();
 var app = new WhatsAppOrchestrator(meta, router, store);
-string Payload(string id, string text, string phone = "966500000001") => JsonSerializer.Serialize(new { entry = new[] { new { changes = new[] { new { value = new { messages = new[] { new { id, from = phone, text = new { body = text } } } } } } } } });
+string Payload(string id, string text, string phone = "966500000001", DateTimeOffset? sentAt = null) => JsonSerializer.Serialize(new { entry = new[] { new { changes = new[] { new { value = new { messages = new[] { new { id, from = phone, timestamp = (sentAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds().ToString(), text = new { body = text } } } } } } } } });
 void Check(bool ok, string label) { if (!ok) throw new Exception(label); Console.WriteLine("PASS " + label); }
 await app.HandleAsync(Payload("m1", "مرحبا"), default);
 Check(handler.Replies.Last().Contains("اسمك") && !handler.Replies.Last().Contains("ري باي المالية"), "Arabic welcome asks for name with no footer");
@@ -64,7 +64,7 @@ DemoConversation.TryReply(demoState, "جوال بميزانية 2000", out demoR
 Check(demoReply.Contains("الشركات السعودية") && demoReply.Contains("ما صار بحث"), "Saudi-default purchase example never claims live search");
 Check(demoState.TransferExamples == 1 && demoState.SearchExamples == 1 && demoState.PaymentExamples == 1, "Example counters have explicit meanings");
 await app.HandleAsync(Payload("demo1", "جرب تحويل"), default);
-var contactPayload = JsonSerializer.Serialize(new { entry = new[] { new { changes = new[] { new { value = new { messages = new[] { new { id = "demo2", from = "966500000001", contacts = new[] { new { name = new { formatted_name = "خالد" }, phones = new[] { new { phone = "0500000000" } } } } } } } } } } } });
+var contactPayload = JsonSerializer.Serialize(new { entry = new[] { new { changes = new[] { new { value = new { messages = new[] { new { id = "demo2", from = "966500000001", timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), contacts = new[] { new { name = new { formatted_name = "خالد" }, phones = new[] { new { phone = "0500000000" } } } } } } } } } } } });
 await app.HandleAsync(contactPayload, default);
 Check(handler.Replies.Last().Contains("الريال السعودي"), "Shared WhatsApp contact parsed into example recipient");
 await app.HandleAsync(Payload("demo3", "250"), default);
@@ -144,6 +144,44 @@ NameConversation.TryReply(pendingRename, "هلا حبيبي", out var greetingRe
 Check(pendingRename.Name == "محمد العلي" && pendingRename.AwaitingNameChange && greetingReply.Contains("يا هلا"), "Greeting during rename preserves saved identity and pending name request");
 NameConversation.TryReply(pendingRename, "اسمي هلا حبيبي", out _);
 Check(pendingRename.Name == "محمد العلي", "Explicit prefix cannot turn greeting into saved name");
+// Redelivery after the deduplication window must not revive old conversations.
+var repliesBeforeStale = handler.Replies.Count;
+var callsBeforeStale = provider.Calls;
+await app.HandleAsync(Payload("old-unseen", "مرحبا", sentAt: DateTimeOffset.UtcNow.AddMinutes(-6)), default);
+await app.HandleAsync(Payload("future-unseen", "مرحبا", sentAt: DateTimeOffset.UtcNow.AddMinutes(2)), default);
+await app.HandleAsync(Payload("old-foreign", "hello", "15550000001", DateTimeOffset.UtcNow.AddMinutes(-6)), default);
+await app.HandleAsync(Payload("no-timestamp", "مرحبا").Replace("\"timestamp\"", "\"missingTimestamp\""), default);
+await app.HandleAsync("{\"entry\":[{\"changes\":[{\"value\":{\"statuses\":[{\"id\":\"status-only\"}]}}]}]}", default);
+Check(handler.Replies.Count == repliesBeforeStale && provider.Calls == callsBeforeStale, "Old, future, timestamp-free and status events do not reply");
+await using (var legacy = await restarted.OpenSessionAsync("966500000002", default))
+{
+    legacy.State.Name = "محمد";
+    legacy.State.Welcomed = true;
+    legacy.State.AwaitingNameChange = true;
+    legacy.State.Turns.Add(new ChatTurn("assistant", "عشان نحدّث بياناتك، ممكن اسمك الثنائي؟ الاسم الأول واسم العائلة"));
+    await legacy.SaveAsync(default);
+}
+await app.HandleAsync(Payload("legacy-question", "وش الخدمات؟", "966500000002"), default);
+Check(provider.Calls == callsBeforeStale + 1 && !handler.Replies.Last().Contains("نحدّث بياناتك"), "Legacy first name does not force repeated profile upgrade");
+await using (var legacy = await restarted.OpenSessionAsync("966500000002", default))
+    Check(legacy.State.Name == "محمد" && !legacy.State.AwaitingNameChange, "Legacy name retained and automatic upgrade request cleared");
+
+// A webhook disconnection after a successful send must not cancel the persisted checkpoint.
+using var disconnect = new CancellationTokenSource();
+var webhookOptions = Options.Create(new RePayOptions { MetaAppSecret = "test-secret" });
+var webhookContext = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+var webhookBody = Payload("disconnect-check", "هلا", "966500000002");
+webhookContext.Request.Body = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(webhookBody));
+webhookContext.Request.Headers["X-Hub-Signature-256"] = "sha256=" + Convert.ToHexStringLower(
+    System.Security.Cryptography.HMACSHA256.HashData(System.Text.Encoding.UTF8.GetBytes("test-secret"), System.Text.Encoding.UTF8.GetBytes(webhookBody)));
+webhookContext.RequestAborted = disconnect.Token;
+handler.OnSent = () => disconnect.Cancel();
+var webhookResult = await WebhookEndpoints.ReceiveAsync(webhookContext.Request, webhookOptions, app, NullLoggerFactory.Instance, new TestLifetime());
+handler.OnSent = null;
+Check(webhookResult is Microsoft.AspNetCore.Http.HttpResults.Ok && disconnect.IsCancellationRequested, "Client disconnect does not cancel webhook processing");
+var beforeDisconnectedRetry = handler.Replies.Count;
+await app.HandleAsync(webhookBody, default);
+Check(handler.Replies.Count == beforeDisconnectedRetry, "Disconnected webhook retry does not resend saved reply");
 Console.WriteLine("All conversation checks passed.");
 
 sealed class TestProvider : IAgentProvider
@@ -153,7 +191,7 @@ sealed class TestProvider : IAgentProvider
 }
 sealed class RecordingHandler : HttpMessageHandler
 {
- public List<string> Replies = []; public string? LastGroqBody; public bool FailNext; public int FailAfter = -1;
+ public Action? OnSent; public List<string> Replies = []; public string? LastGroqBody; public bool FailNext; public int FailAfter = -1;
  protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
  {
   var body = await request.Content!.ReadAsStringAsync(ct);
@@ -163,6 +201,7 @@ sealed class RecordingHandler : HttpMessageHandler
   if (FailAfter > 0) FailAfter--;
   if (FailNext) { FailNext = false; return new(HttpStatusCode.ServiceUnavailable); }
   using var json = JsonDocument.Parse(body); Replies.Add(json.RootElement.GetProperty("text").GetProperty("body").GetString()!);
+  OnSent?.Invoke();
   return new(HttpStatusCode.OK) { Content = new StringContent("{}") };
  }
 }
@@ -170,4 +209,12 @@ sealed class TestEnvironment : IHostEnvironment
 {
  public string EnvironmentName { get; set; } = "Testing"; public string ApplicationName { get; set; } = "Tests";
  public string ContentRootPath { get; set; } = ""; public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
+}
+
+sealed class TestLifetime : IHostApplicationLifetime
+{
+ public CancellationToken ApplicationStarted => CancellationToken.None;
+ public CancellationToken ApplicationStopping => CancellationToken.None;
+ public CancellationToken ApplicationStopped => CancellationToken.None;
+ public void StopApplication() { }
 }

@@ -5,11 +5,17 @@ namespace RePay.WhatsAppPoc.Services;
 
 public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRouter agent, ConversationStore store)
 {
+    private static readonly TimeSpan MaxIncomingAge = TimeSpan.FromMinutes(5);
+
     public async Task HandleAsync(string rawPayload, CancellationToken ct)
     {
         using var json = JsonDocument.Parse(rawPayload);
         foreach (var message in ExtractTextMessages(json.RootElement))
         {
+            // Meta may redeliver old messages long after the user stopped chatting.
+            // Acknowledge those webhooks without replying or changing conversation state.
+            var receivedAt = DateTimeOffset.UtcNow;
+            if (receivedAt - message.SentAt > MaxIncomingAge || message.SentAt - receivedAt > TimeSpan.FromMinutes(1)) continue;
             if (!Regex.IsMatch(message.Phone, @"^9665[0-9]{8}$"))
             {
                 await whatsapp.SendTextAsync(message.Phone, "خدمة ري باي متاحة حاليًا للأرقام السعودية فقط", ct);
@@ -18,6 +24,12 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             await using var session = await store.OpenSessionAsync(message.Phone, ct);
             var state = session.State;
             if (state.ProcessedMessages.Contains(message.Id)) continue;
+            // Older releases automatically requested a full name from existing users.
+            // Release that automatic prompt without cancelling an explicit rename request.
+            if (state.Name is not null && state.AwaitingNameChange
+                && state.Turns.LastOrDefault(t => t.Role == "assistant")?.Text
+                    == "عشان نحدّث بياناتك، ممكن اسمك الثنائي؟ الاسم الأول واسم العائلة")
+                state.AwaitingNameChange = false;
             string reply;
             var retry = state.PendingMessageId == message.Id && state.PendingReply is not null;
             if (!retry) { ConversationLifecycle.Expire(state, DateTimeOffset.UtcNow); state.PendingFollowUp = null; state.PendingReplyIndex = 0; }
@@ -42,11 +54,6 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
                     state.AwaitingNameChange = true;
                     reply = "ممكن اسمك الثنائي؟ الاسم الأول واسم العائلة";
                 }
-            }
-            else if (state.Name is not null && !NameConversation.TryFullName(state.Name, out _))
-            {
-                state.AwaitingNameChange = true;
-                reply = "عشان نحدّث بياناتك، ممكن اسمك الثنائي؟ الاسم الأول واسم العائلة";
             }
             else if (DemoConversation.TryReply(state, message.Text, out var demoReply))
             {
@@ -102,7 +109,7 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
 
     private static string RedactPhone(string text) => Regex.Replace(text, @"[+＋]?[0-9٠-٩][0-9٠-٩ ()-]{7,}[0-9٠-٩]", "[رقم جوال]");
 
-    private static IEnumerable<(string Id, string Phone, string Text)> ExtractTextMessages(JsonElement root)
+    private static IEnumerable<(string Id, string Phone, string Text, DateTimeOffset SentAt)> ExtractTextMessages(JsonElement root)
     {
         if (!root.TryGetProperty("entry", out var entries)) yield break;
         foreach (var entry in entries.EnumerateArray())
@@ -113,14 +120,18 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             foreach (var message in messages.EnumerateArray())
             {
                 if (!message.TryGetProperty("id", out var id) || !message.TryGetProperty("from", out var from)) continue;
+                if (!message.TryGetProperty("timestamp", out var timestamp) || timestamp.ValueKind != JsonValueKind.String
+                    || !long.TryParse(timestamp.GetString(), out var seconds) || seconds < 0 || seconds > 253402300799) continue;
+                if (string.IsNullOrWhiteSpace(id.GetString()) || string.IsNullOrWhiteSpace(from.GetString())) continue;
+                var sentAt = DateTimeOffset.FromUnixTimeSeconds(seconds);
                 if (message.TryGetProperty("text", out var text) && text.TryGetProperty("body", out var body))
-                    yield return (id.GetString()!, from.GetString()!, body.GetString()!);
+                    yield return (id.GetString()!, from.GetString()!, body.GetString()!, sentAt);
                 else if (message.TryGetProperty("contacts", out var contacts) && contacts.GetArrayLength() > 0)
                 {
                     var contact = contacts[0];
                     var name = contact.TryGetProperty("name", out var n) && n.TryGetProperty("formatted_name", out var full) ? full.GetString() : "جهة اتصال";
                     var phone = contact.TryGetProperty("phones", out var phones) && phones.GetArrayLength() > 0 && phones[0].TryGetProperty("phone", out var number) ? number.GetString() : "";
-                    yield return (id.GetString()!, from.GetString()!, $"{name} {phone}".Trim());
+                    yield return (id.GetString()!, from.GetString()!, $"{name} {phone}".Trim(), sentAt);
                 }
             }
         }
