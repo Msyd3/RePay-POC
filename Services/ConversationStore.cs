@@ -11,6 +11,8 @@ public sealed class ConversationState
 {
     public string? Name { get; set; }
     public bool AwaitingNameChange { get; set; }
+    public string? Focus { get; set; }
+    public bool AwaitingClarification { get; set; }
     public DemoState? Demo { get; set; }
     public long MessageCount { get; set; }
     public long ConversationCount { get; set; }

@@ -61,7 +61,7 @@ DemoConversation.TryReply(demoState, "محمد 0500000000", out _);
 Check(DemoConversation.TryReply(demoState, "١٠٠ ريال", out demoReply) && demoReply.Contains("100") && demoReply.Contains("ما تم تحويل"), "Arabic amount creates non-executing summary");
 DemoConversation.TryReply(demoState, "جرب شراء", out _);
 DemoConversation.TryReply(demoState, "جوال بميزانية 2000", out demoReply);
-Check(demoReply.Contains("الشركات السعودية") && demoReply.Contains("ما صار بحث"), "Saudi-default purchase example never claims live search");
+Check(!demoReply.Contains("الشركات السعودية") && !demoReply.Contains("تخدم السعودية") && demoReply.Contains("ما صار بحث"), "Purchase example has no geographic default and never claims live search");
 Check(demoState.TransferExamples == 1 && demoState.SearchExamples == 1 && demoState.PaymentExamples == 1, "Example counters have explicit meanings");
 await app.HandleAsync(Payload("demo1", "جرب تحويل"), default);
 var contactPayload = JsonSerializer.Serialize(new { entry = new[] { new { changes = new[] { new { value = new { messages = new[] { new { id = "demo2", from = "966500000001", timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), contacts = new[] { new { name = new { formatted_name = "خالد" }, phones = new[] { new { phone = "0500000000" } } } } } } } } } } } });
@@ -82,7 +82,9 @@ await app.HandleAsync(Payload("retry-demo", "جرب تحويل"), default);
 await using (var retryState = await restarted.OpenSessionAsync("966500000001", default))
     Check(retryState.State.TransferExamples == 2 && retryState.State.Demo?.Stage == "recipient", "Failed delivery retry reuses summary without double-counting or advancing");
 Check(!DemoConversation.TryReply(new ConversationState(), "ما دوركم؟", out _), "Service questions do not start shopping examples");
+provider.IntentOutput = _ => "{\"action\":\"rename\",\"value\":null}";
 await app.HandleAsync(Payload("name-during-demo", "ممكن تغير الاسم؟"), default);
+provider.IntentOutput = null;
 await app.HandleAsync(Payload("name-followup", "سلمان العلي"), default);
 await app.HandleAsync(Payload("name-read", "وش اسمي؟"), default);
 Check(handler.Replies.Last().Contains("*سلمان العلي*"), "Name update takes priority over active demo and is read back");
@@ -182,20 +184,137 @@ Check(webhookResult is Microsoft.AspNetCore.Http.HttpResults.Ok && disconnect.Is
 var beforeDisconnectedRetry = handler.Replies.Count;
 await app.HandleAsync(webhookBody, default);
 Check(handler.Replies.Count == beforeDisconnectedRetry, "Disconnected webhook retry does not resend saved reply");
+async Task<string> Route(ConversationState state, string input, string action, string? value = null)
+{
+    provider.IntentOutput = _ => JsonSerializer.Serialize(new { action, value });
+    try { return await ContextConversation.ReplyAsync(state, input, router, default); }
+    finally { provider.IntentOutput = null; }
+}
+var contextual = new ConversationState { Name = "محمد العلي", Welcomed = true,
+    Demo = new DemoState { Kind = "transfer", Stage = "amount", Recipient = "خالد العلي" } };
+var ownName = await Route(contextual, "وش اسمي؟", "question");
+contextual.Turns.Add(new ChatTurn("user", "وش اسمي؟"));
+contextual.Turns.Add(new ChatTurn("assistant", ownName));
+var editOwnName = await Route(contextual, "ابي اعدله", "rename");
+Check(contextual.Demo is null && contextual.AwaitingNameChange && editOwnName.Contains("اسمك"), "Contextual own-name edit cancels transfer instead of asking amount");
+using (var intentContext = JsonDocument.Parse(provider.LastIntent))
+{
+    Check(intentContext.RootElement.GetProperty("conversationState").GetProperty("focus").GetString() == "profile"
+        && intentContext.RootElement.GetProperty("recentConversation")[1].GetProperty("Text").GetString()!.Contains("محمد العلي"), "Interpreter receives profile focus and actual role history");
+}
+await Route(contextual, "ناصر السالم", "continue");
+Check(contextual.Name == "ناصر السالم" && !contextual.AwaitingNameChange, "Contextual rename saves only a validated full name");
+await Route(contextual, "جرب تحويل", "start_transfer");
+await Route(contextual, "خالد العلي", "continue");
+await Route(contextual, "100 ريال", "continue");
+Check(contextual.Demo?.Stage == "confirm", "Transfer summary ready before edits");
+await Route(contextual, "غير المبلغ إلى 200", "edit_amount", "200");
+Check(contextual.Demo?.Amount == 200 && contextual.Demo.Summary!.Contains("200.00")
+    && !contextual.Demo.Summary.Contains("100.00") && contextual.Demo.Stage == "confirm", "Amount edit replaces stale summary and requires fresh confirmation");
+await Route(contextual, "غير المستفيد إلى سلمان العلي", "edit_recipient", "سلمان العلي");
+Check(contextual.Demo?.Recipient == "سلمان العلي" && contextual.Demo.Summary!.Contains("سلمان العلي")
+    && !contextual.Demo.Summary.Contains("خالد العلي") && contextual.Demo.Amount == 200, "Recipient edit preserves amount and rebuilds summary");
+await Route(contextual, "لا ابي ادفع بدل التحويل", "start_payment");
+Check(contextual.Demo?.Kind == "payment" && contextual.Demo.Stage == "product" && contextual.Demo.Recipient is null
+    && !contextual.AwaitingNameChange, "Negative transfer phrase switches to payment with old transfer details cleared");
+await Route(contextual, "سماعات", "continue", "سماعات");
+await Route(contextual, "بدل السماعات ابي جوال", "edit_product", "جوال");
+Check(contextual.Demo?.Product == "جوال" && contextual.Demo.Summary!.Contains("جوال")
+    && !contextual.Demo.Summary.Contains("سماعات") && !contextual.Demo.Summary.Contains("تخدم السعودية"), "Product edits replace old item without geographic wording");
+await Route(contextual, "ابي احول", "start_transfer");
+Check(contextual.Demo?.Kind == "transfer" && contextual.Demo.Product is null, "Payment-to-transfer clears product and confirmation");
+await Route(contextual, "ابي اعدله", "clarify");
+Check(contextual.Demo?.Stage == "recipient" && contextual.Demo.Recipient is null && contextual.AwaitingClarification, "Ambiguous edit clarifies without inventing a recipient");
+await Route(contextual, "اسمي", "rename");
+Check(contextual.Demo is null && contextual.AwaitingNameChange, "Clarification reply 'my name' selects profile editing instead of reading the name");
+await Route(contextual, "ابي ادفع", "start_payment");
+Check(!contextual.AwaitingNameChange && contextual.Demo?.Kind == "payment", "New payment request interrupts pending rename");
+await Route(contextual, "وقف خلنا نتكلم عن الخدمات", "new_topic");
+Check(contextual.Demo is null && !contextual.AwaitingNameChange, "New topic discards old task instead of resuming payment");
+await Route(contextual, "تمام", "continue");
+Check(contextual.Demo is null, "Acknowledgment after new topic does not confirm an abandoned request");
+await Route(contextual, "جرب تحويل", "start_transfer");
+await Route(contextual, "ما ابي احول خلاص", "cancel");
+Check(contextual.Demo is null, "Negated transfer request cancels rather than starting transfer");
+await Route(contextual, "جرب تحويل", "start_transfer");
+await Route(contextual, "ابي اعدله", "continue");
+Check(contextual.Demo is { Recipient: null, Stage: "recipient" }, "Even an incorrect continue decision cannot consume an edit phrase as recipient");
+await Route(contextual, "محمد السالم", "rename", "خالد المزيف");
+Check(contextual.Name == "ناصر السالم" && contextual.Demo is not null, "Invented model slot rejected without mutating identity or task");
+await Route(contextual, "اسمي", "rename");
+await Route(contextual, "ناصر السالم", "continue");
+await Route(contextual, "جرب تحويل", "start_transfer");
+await Route(contextual, "خالد العلي", "continue");
+await Route(contextual, "100", "continue");
+contextual.PendingFollowUp = null;
+contextual.Turns.Add(new ChatTurn("assistant", "الفكرة إن كل عملية تحتاج موافقتك"));
+await Route(contextual, "تمام", "continue");
+Check(contextual.Demo?.Stage == "confirm" && contextual.AwaitingClarification, "Acknowledgment of side answer does not accidentally confirm transfer");
+Check(ConversationIntent.Parse("{\"action\":\"send_money\",\"value\":null}") is null
+    && ConversationIntent.Parse("not json") is null, "Intent parser rejects unrecognized actions and invalid JSON");
+provider.IntentOutput = _ => "invalid JSON";
+var unavailable = new ConversationState { Name = "محمد العلي", Welcomed = true, Demo = new DemoState { Kind = "payment", Stage = "product" } };
+await ContextConversation.ReplyAsync(unavailable, "ابي اعدله", router, default);
+provider.IntentOutput = null;
+Check(unavailable.AwaitingClarification && unavailable.Demo?.Product is null, "Invalid provider output falls back to clarification without advancing");
+await using (var persistent = await restarted.OpenSessionAsync("966500000003", default))
+{
+    persistent.State.Name = "محمد العلي";
+    persistent.State.Welcomed = true;
+    persistent.State.Focus = "profile";
+    persistent.State.Demo = new DemoState { Kind = "transfer", Stage = "amount", Recipient = "خالد 0500000000" };
+    persistent.State.Turns.Add(new ChatTurn("assistant", "اسمك المحفوظ محمد العلي"));
+    await persistent.SaveAsync(default);
+}
+provider.IntentOutput = _ => "{\"action\":\"rename\",\"value\":null}";
+handler.FailNext = true;
+try { await app.HandleAsync(Payload("context-retry", "ابي اعدله", "966500000003"), default); } catch (HttpRequestException) { }
+provider.IntentOutput = _ => throw new Exception("Must not reinterpret persisted reply");
+await app.HandleAsync(Payload("context-retry", "ابي اعدله", "966500000003"), default);
+provider.IntentOutput = null;
+var contextRestart = new ConversationStore(options, env);
+await using (var persistedContext = await contextRestart.OpenSessionAsync("966500000003", default))
+    Check(persistedContext.State.Focus == "profile" && persistedContext.State.AwaitingNameChange && persistedContext.State.Demo is null, "Context transition persists across failed delivery, retry and store restart");
+Check(!provider.LastIntent.Contains("0500000000") && !provider.LastIntent.Contains("966500000003"), "Intent routing receives redacted recipient and sender phone numbers");
+handler.GroqContent = "{\"action\":\"rename\",\"value\":null}";
+var groqIntent = await new GroqAgentClient(new HttpClient(handler), options).InterpretAsync(ContextConversation.Context(contextual, "ابي اعدله"), default);
+using (var sentIntent = JsonDocument.Parse(handler.LastGroqBody!))
+    Check(ConversationIntent.Parse(groqIntent)?.Action == "rename"
+        && sentIntent.RootElement.GetProperty("messages")[0].GetProperty("content").GetString()!.Contains("edit_recipient")
+        && !sentIntent.RootElement.TryGetProperty("tools", out _), "Groq sends dedicated intent instructions and parses transport response without tools");
+handler.GroqContent = null;
+var fallbackRouter = new AgentRouter([new FixedIntentProvider("invalid JSON"), new FixedIntentProvider("{\"action\":\"rename\",\"value\":null}")], NullLogger<AgentRouter>.Instance);
+Check((await fallbackRouter.InterpretAsync(ContextConversation.Context(contextual, "ابي اعدله"), default)).Action == "rename", "Invalid first-provider intent tries configured fallback");
+var recipientEdit = new ConversationState { Name = "محمد العلي", Welcomed = true, Demo = new DemoState { Kind = "transfer", Stage = "confirm", Recipient = "خالد العلي", Amount = 100 } };
+await Route(recipientEdit, "غير الاسم حق المستفيد", "edit_recipient");
+Check(recipientEdit.Name == "محمد العلي" && !recipientEdit.AwaitingNameChange && recipientEdit.Demo?.Stage == "recipient", "Beneficiary name edit is never mistaken for profile name edit");
+await Route(recipientEdit, "غيرت رايي", "clarify");
+Check(recipientEdit.Demo?.Recipient == "خالد العلي" && recipientEdit.AwaitingClarification, "Change-of-mind phrase never becomes a beneficiary name");
+var pendingProfile = new ConversationState { Name = "محمد العلي", Welcomed = true, AwaitingNameChange = true };
+await Route(pendingProfile, "غيرت رايي ابي ادفع", "start_payment");
+Check(!pendingProfile.AwaitingNameChange && pendingProfile.Name == "محمد العلي" && pendingProfile.Demo?.Kind == "payment", "Natural change-of-mind interrupts profile collection without overwriting name");
 Console.WriteLine("All conversation checks passed.");
 
 sealed class TestProvider : IAgentProvider
 {
+ public string LastIntent = ""; public Func<string, string>? IntentOutput;
+ public Task<string> InterpretAsync(string text, CancellationToken ct)
+ {
+  LastIntent = text;
+  using var json = JsonDocument.Parse(text);
+  var current = json.RootElement.GetProperty("currentMessage").GetString()!;
+  return Task.FromResult(IntentOutput?.Invoke(current) ?? JsonSerializer.Serialize(new { action = System.Text.RegularExpressions.Regex.IsMatch(current, @"^(كيف|وش|ايش|هل|متى|ليش)\b") ? "question" : "continue", value = current }));
+ }
  public string Name => "Test"; public bool IsConfigured => true; public int Calls; public string LastInput = "";
  public Task<string> ReplyAsync(string text, CancellationToken ct) { Calls++; LastInput = text; return Task.FromResult("الخدمات بتتاح تدريجيًا، وحاليًا أجاوب عن أسئلتك عنها."); }
 }
 sealed class RecordingHandler : HttpMessageHandler
 {
- public Action? OnSent; public List<string> Replies = []; public string? LastGroqBody; public bool FailNext; public int FailAfter = -1;
+ public Action? OnSent; public List<string> Replies = []; public string? LastGroqBody; public string? GroqContent; public bool FailNext; public int FailAfter = -1;
  protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
  {
   var body = await request.Content!.ReadAsStringAsync(ct);
-  if (request.RequestUri!.Host == "api.groq.com") { LastGroqBody = body; return new(HttpStatusCode.OK) { Content = new StringContent("{\"choices\":[{\"message\":{\"content\":\"الخدمات قريبًا\"}}]}") }; }
+  if (request.RequestUri!.Host == "api.groq.com") { LastGroqBody = body; return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new { choices = new[] { new { message = new { content = GroqContent ?? "الخدمات قريبًا" } } } })) }; }
   if (request.RequestUri.Host != "graph.facebook.com") throw new Exception("Unexpected browser/network call");
   if (FailAfter == 0) { FailAfter = -1; return new(HttpStatusCode.ServiceUnavailable); }
   if (FailAfter > 0) FailAfter--;
@@ -217,4 +336,10 @@ sealed class TestLifetime : IHostApplicationLifetime
  public CancellationToken ApplicationStopping => CancellationToken.None;
  public CancellationToken ApplicationStopped => CancellationToken.None;
  public void StopApplication() { }
+}
+sealed class FixedIntentProvider(string output) : IAgentProvider
+{
+ public string Name => "Fixed"; public bool IsConfigured => true;
+ public Task<string> InterpretAsync(string context, CancellationToken ct) => Task.FromResult(output);
+ public Task<string> ReplyAsync(string text, CancellationToken ct) => throw new NotSupportedException();
 }

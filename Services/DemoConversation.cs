@@ -9,6 +9,7 @@ public sealed class DemoState
     public string? Recipient { get; set; }
     public string? Product { get; set; }
     public string? Summary { get; set; }
+    public decimal? Amount { get; set; }
 }
 
 public static class DemoConversation
@@ -43,7 +44,7 @@ public static class DemoConversation
                 // Preserve a product already supplied with a purchase request.
                 var product = Regex.Match(clean, @"^(?:(?:ابي|ابغى|اريد)\s+)?(?:اشتري|ادفع قيمة|ابحث عن|دور لي|ادور على)\s+(.+)$");
                 if (product.Success) return PurchaseSummary(state, demo, product.Groups[1].Value, out reply);
-                reply = "*مثال شراء — بدون تنفيذ*\n\nوش المنتج اللي تبيه؟ تقدر تضيف اسم المتجر أو رابطه في نفس الرسالة. يكفي اسم المنتج؛ النطاق الافتراضي شركات سعودية أو متاجر تخدم السعودية.";
+                reply = "*مثال شراء — بدون تنفيذ*\n\nوش المنتج اللي تبيه؟ تقدر تضيف اسم المتجر أو رابطه في نفس الرسالة. يكفي اسم المنتج";
             }
             return true;
         }
@@ -58,6 +59,7 @@ public static class DemoConversation
         {
             if (text.Length < 2 || Regex.IsMatch(clean, @"^(نعم|ايه|تمام|طيب|شكرا)$")) { reply = "اكتب اسم المستفيد أو شارك جهة الاتصال عشان نكمل المثال."; return true; }
             demo.Recipient = SafeText(text); demo.Stage = "amount";
+            if (demo.Amount is not null) return TransferSummary(state, demo, demo.Amount.Value, out reply);
             reply = "*المبلغ بالريال السعودي*\nكم تبي تحوّل في المثال؟"; return true;
         }
         if (demo.Stage == "amount")
@@ -67,11 +69,7 @@ public static class DemoConversation
             var match = Regex.Match(normalized, @"^\s*(\d{1,7}(?:\.\d{1,2})?)\s*(?:ريال(?: سعودي)?|ر\.س|SAR)?\s*$", RegexOptions.IgnoreCase);
             if (!match.Success || !decimal.TryParse(match.Groups[1].Value, CultureInfo.InvariantCulture, out var amount) || amount <= 0)
             { reply = "المبالغ بالريال السعودي فقط. اكتب مثلًا: 100 ريال سعودي."; return true; }
-            demo.Summary = $"*العملية:* تحويل تجريبي\n*الحساب المصدر:* حساب ري باي (افتراضي للمثال)\n*المستفيد:* {demo.Recipient}\n*المبلغ:* {amount.ToString("0.00", CultureInfo.InvariantCulture)} ريال سعودي";
-            demo.Stage = "confirm";
-            reply = $"*ملخص التحويل*\n\n{demo.Summary}\n\n_مثال توضيحي، ما تم تحويل أي مبلغ._";
-            state.PendingFollowUp = "هل تؤكد هذا المثال؟\nاكتب *تأكيد* أو *إلغاء*. بعدها نبدأ طلبًا جديدًا، بدون تنفيذ مالي.";
-            return true;
+            return TransferSummary(state, demo, amount, out reply);
         }
         if (demo.Stage is "product" or "store")
             return PurchaseSummary(state, demo, demo.Stage == "store" ? $"{demo.Product} — {text}" : text, out reply);
@@ -83,11 +81,20 @@ public static class DemoConversation
         if (product.Length > 250 || Regex.IsMatch(product, @"^(نعم|ايه|تمام|طيب)$"))
         { reply = "اكتب اسم المنتج اللي تبيه للمثال."; return true; }
         demo.Product = SafeText(product);
-        demo.Summary = $"*العملية:* شراء تجريبي\n*الحساب المصدر:* حساب ري باي (افتراضي للمثال)\n*المنتج وطلبك:* {demo.Product}\n*نطاق البحث المقترح:* الشركات السعودية أو المتاجر التي تخدم السعودية؛ يُقدّم متجرك المحدد إن ذكرته\n*مبلغ توضيحي فقط:* 100.00 ريال سعودي (ليس سعر المنتج)";
+        demo.Summary = $"*العملية:* شراء تجريبي\n*الحساب المصدر:* حساب ري باي (افتراضي للمثال)\n*المنتج وطلبك:* {demo.Product}\n*مبلغ توضيحي فقط:* 100.00 ريال سعودي (ليس سعر المنتج)";
         demo.Stage = "confirm";
         state.PaymentExamples++;
         reply = $"*مثال على طلبك*\n\n{demo.Summary}\n\nالفكرة أدور لك غرضك وأجهّز الشراء، وأعرض التفاصيل والسعر النهائي لموافقتك؛ ما يشترط تكاملًا مباشرًا مع المتجر.\n\n_هنا ما صار بحث أو شراء أو دفع فعلي._";
         state.PendingFollowUp = "تؤكد ملخص مثال الشراء؟\nاكتب *تأكيد* أو *إلغاء*، وبعدها نبدأ طلبًا جديدًا. التأكيد هنا للمثال فقط.";
+        return true;
+    }
+    private static bool TransferSummary(ConversationState state, DemoState demo, decimal amount, out string reply)
+    {
+        demo.Amount = amount;
+        demo.Summary = $"*العملية:* تحويل تجريبي\n*الحساب المصدر:* حساب ري باي (افتراضي للمثال)\n*المستفيد:* {demo.Recipient}\n*المبلغ:* {amount.ToString("0.00", CultureInfo.InvariantCulture)} ريال سعودي";
+        demo.Stage = "confirm";
+        reply = $"*ملخص التحويل*\n\n{demo.Summary}\n\n_مثال توضيحي، ما تم تحويل أي مبلغ._";
+        state.PendingFollowUp = "هل تؤكد هذا المثال؟\nاكتب *تأكيد* أو *إلغاء*. بعدها نبدأ طلبًا جديدًا، بدون تنفيذ مالي.";
         return true;
     }
     private static string SafeText(string text) => text.Replace("*", "").Replace("_", "").Replace("~", "").Replace("`", "").Replace('\n', ' ').Replace('\r', ' ');

@@ -8,6 +8,8 @@ public static class ConversationLifecycle
         if (state.LastMessageAt is null || now - state.LastMessageAt < IdleTimeout) return false;
         state.Demo = null;
         state.AwaitingNameChange = false;
+        state.Focus = null;
+        state.AwaitingClarification = false;
         state.Turns.Clear();
         state.PendingFollowUp = null;
         return true;

@@ -12,16 +12,19 @@ public sealed class GroqAgentClient(HttpClient http, IOptions<RePayOptions> opti
     public bool IsConfigured => !string.IsNullOrWhiteSpace(_options.GroqApiKey);
 
 
-    public async Task<string> ReplyAsync(string userText, CancellationToken ct)
+    public Task<string> ReplyAsync(string userText, CancellationToken ct) => CompleteAsync(userText, ServiceConversation.Instructions, false, ct);
+    public Task<string> InterpretAsync(string context, CancellationToken ct) => CompleteAsync(context, ConversationIntent.Instructions, true, ct);
+
+    private async Task<string> CompleteAsync(string userText, string instructions, bool interpret, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, "https://api.groq.com/openai/v1/chat/completions");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.GroqApiKey);
         request.Content = JsonContent.Create(new
         {
             model = ServiceConversation.ChatModel,
-            messages = new[] { new { role = "system", content = ServiceConversation.Instructions } }
+            messages = new[] { new { role = "system", content = instructions } }
                 .Concat(ServiceConversation.ModelTurns(userText).Select(t => new { role = t.Role, content = t.Text })),
-            temperature = 0.3,
+            temperature = interpret ? 0.0 : 0.3,
             max_completion_tokens = 1000
         });
 

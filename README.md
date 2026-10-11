@@ -46,7 +46,7 @@ Conversation updates: short contextual replies, future transfer/purchase example
 
 ## Interactive examples and private analytics
 
-`جرب تحويل` collects a recipient name, phone, or one shared WhatsApp contact and a SAR amount; the final message is explicitly a simulation. `جرب شراء` produces an example immediately after the product, using Saudi companies as the default unless the user specifies otherwise. Its 100.00 SAR amount is explicitly illustrative, not a quote. Summaries are followed by a separate confirmation message; confirmation repeats the example and resets the flow without any transaction. All example amounts use Saudi riyals. Neither calls search, browser, bank, or payment tools. Store integration is not assumed for the proposed future flow; availability is not guaranteed.
+`جرب تحويل` collects a recipient name, phone, or one shared WhatsApp contact and a SAR amount; the final message is explicitly a simulation. `جرب شراء` produces an example immediately after the product, without assuming a geographic scope; the user's product and store preferences guide the example. Its 100.00 SAR amount is explicitly illustrative, not a quote. Summaries are followed by a separate confirmation message; confirmation repeats the example and resets the flow without any transaction. All example amounts use Saudi riyals. Neither calls search, browser, bank, or payment tools. Store integration is not assumed for the proposed future flow; availability is not guaranteed.
 
 `/analytics` shows aggregate numbers only. Set `RePay__AnalyticsPassword` to a private password. The API fails closed when unset. The password is entered in the page and sent via an Authorization header, never a URL, and held only in page memory. Use HTTPS. Authenticated analytics returns names and only the last four phone digits; full phone numbers and message text are never returned. The API limits requests to 30 per minute.
 
@@ -54,7 +54,7 @@ Users = all stored unique WhatsApp senders. Conversations = sessions separated b
 
 The dashboard bundles the owner-supplied Thmanyah Sans webfont so it renders across devices. Copyright © 2026 thmanyah Publishing and Distribution.
 
-Render Free sleeps after 15 idle minutes. Deterministic examples avoid model latency, and each AI provider has a 15-second timeout; these cannot remove hosting cold starts. An always-on instance is required for consistently prompt first replies.
+Render Free sleeps after 15 idle minutes. Unambiguous examples avoid model latency; contextual intent interpretation uses Groq with Gemini fallback, and each AI provider has a 15-second timeout; these cannot remove hosting cold starts. An always-on instance is required for consistently prompt first replies.
 
 Conversations reset after five idle minutes on the next incoming message, preserving saved identity, counters and deduplication. Registration and user-requested name changes require a multi-part name. Existing saved names remain valid and do not trigger automatic full-name upgrade prompts. Name editing takes priority over examples. A new transfer or purchase request can switch example types at any step. Summaries identify RePay as an illustrative source account only. Outgoing sentence-ending periods are removed without altering decimals or URLs.
 
@@ -66,3 +66,6 @@ Analytics returns only a masked local phone (e.g. `054 XXXX 9449`), never the co
 ### Incoming message replay protection
 Messages older than five minutes, more than one minute in the future, or without a valid Meta timestamp are acknowledged without sending a reply or updating the conversation. This deliberately discards delayed messages after hosting outages instead of answering them later. Status-only events remain ignored. Processing uses a 60-second deadline linked to application shutdown, independent of the webhook client's disconnection, so a dropped HTTP connection does not cancel saving a successful delivery checkpoint. A process crash or an ambiguous outbound timeout can still duplicate delivery; this remains a single-instance POC, not an exactly-once delivery guarantee.
 
+
+### Contextual intent and task changes
+The router reads the latest user message, recent role history, conversation focus, and active example stage before accepting ambiguous text as a name, recipient, product, amount or confirmation. The model returns only an allowlisted intent and an optional detail copied from the current message. Unclear or unavailable interpretations ask a clarification question without advancing the example. Personal name changes cancel an active example; explicit transfers/purchases replace previous tasks, and new-topic decisions discard the old task. Editing a recipient or amount regenerates its summary for fresh confirmation. The model has no financial execution tools and receives redacted phone numbers. Intent interpretation has a 20-second total budget; real-provider intent quality still requires WhatsApp acceptance testing.
