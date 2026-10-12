@@ -9,9 +9,10 @@ ASP.NET Core (.NET 10) chatbot using WhatsApp Cloud API, Groq/Gemini, PostgreSQL
 - Start with `حول لمحمد ٢٠ ريال`, `send Mohammed 20 SAR`, a Saudi mobile number, or a shared WhatsApp contact. Shared contact followed by `حوله ٢٠` continues the same draft.
 - Collect recipient name, Saudi mobile, amount in SAR, optional note and sender first/last name. Ask only missing fields. Never read an address book automatically.
 - Sender name can be edited in Arabic or English while keeping the transfer draft. Changing recipient name clears the previous recipient phone. Every edit invalidates the prior review button.
+- A personalized welcome asks unknown customers for their full name before showing quick-transfer instructions. Recipient names resolve only from up to 20 contacts explicitly shared in this customer’s conversation; ambiguous matches ask for the mobile number. The WhatsApp API does not expose the customer’s address book.
 - Review uses a native WhatsApp reply button, not a displayed URL. Button IDs identify a particular draft revision and expire after three minutes. Tapping it currently explains that the confirmation page will be implemented later. No Apple Pay, financial execution, recipient SMS, OTP, bank linkage or withdrawal is implemented.
 - Webhooks reject old timestamps and deduplicate message IDs. Generated text/button state is persisted before sending so retries reuse the same response. Per-user locks serialize events on this single-instance POC.
-- Phone numbers are masked in review/history and withheld from model context. Recipient phone is retained only in the persisted draft for future review integration.
+- Phone numbers use English digits with left-to-right isolation in the transfer summary and are redacted from history and withheld from model context. Recipient phone is retained only in the persisted draft for future review integration.
 
 ## Configuration
 
