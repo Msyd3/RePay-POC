@@ -67,10 +67,22 @@ public static class TransferConversation
         { s.Transfer = null; return Say(s, "تم إلغاء الطلب، ما تم تحويل أي مبلغ", "Request cancelled. No money has been sent"); }
         if (input == "multiple_contacts") return Say(s, "شارك جهة اتصال واحدة وحدد المستفيد", "Please share one contact and specify the recipient");
         if (input.Length > 250) return Say(s, "اختصر التفاصيل إلى اسم المستفيد وجواله والمبلغ، والملاحظة اختيارية", "Keep the details to recipient, mobile number, amount, and an optional short note");
-        var explicitAmount = Regex.Match(text, @"(?<![\d.])(-?\d+(?:[.٫]\d+)?)\s*(?:ريال|SAR|riyals?)\b", RegexOptions.IgnoreCase);
-        if (!explicitAmount.Success && draft?.RequestedField == "amount") explicitAmount = Regex.Match(text, @"^(-?\d+(?:[.٫]\d+)?)$");
-        if (explicitAmount.Success && (!decimal.TryParse(explicitAmount.Groups[1].Value.Replace('٫', '.'), CultureInfo.InvariantCulture, out var enteredAmount) || enteredAmount <= 0 || enteredAmount > 9999999 || Regex.IsMatch(explicitAmount.Groups[1].Value, @"[.٫]\d{3,}")))
-            return Say(s, "اكتب مبلغًا موجبًا بالريال السعودي، وبحد أقصى منزلتين عشريتين", "Enter a positive amount in SAR with at most two decimal places");
+        var phoneCandidate = Regex.Match(text, @"(?<!\d)(?:\+?966[\s-]*5(?:[\s-]*\d){8}|05(?:[\s-]*\d){8})(?!\d)");
+        if (!phoneCandidate.Success) phoneCandidate = Regex.Match(text, @"(?<!\d)(?:\+?966|05)[0-9 \-]*[0-9](?!\d)");
+        if (!phoneCandidate.Success && Regex.IsMatch(text, @"^\d{8,}$")) phoneCandidate = Regex.Match(text, @"^\d+$");
+        if (phoneCandidate.Success)
+        {
+            var digits = Regex.Replace(phoneCandidate.Value, @"\D", "");
+            var local = digits.StartsWith("966") ? "0" + digits[3..] : digits;
+            if (!Regex.IsMatch(local, @"^05\d{8}$"))
+                return local.Length < 10
+                    ? Say(s, $"رقم الجوال ناقص {10 - local.Length} خانات؛ اكتب الرقم كاملًا من 10 خانات ويبدأ بـ05", $"The mobile number is missing {10 - local.Length} digits. Enter all 10 digits, starting with 05")
+                    : Say(s, "رقم الجوال لازم يكون 10 خانات ويبدأ بـ05", "The mobile number must have 10 digits and start with 05");
+        }
+        var withoutPhone = phoneCandidate.Success ? text.Remove(phoneCandidate.Index, phoneCandidate.Length) : text;
+        var allowBareAmount = draft?.RequestedField == "amount" || Regex.IsMatch(text, @"\b(?:حول|احول|حوله|send|transfer|المبلغ|amount)\b", RegexOptions.IgnoreCase);
+        if (SendAmount.TryExtract(withoutPhone, allowBareAmount, out var suppliedAmount, out _) && !SendAmount.Valid(suppliedAmount))
+            return Say(s, "الحد الأدنى للتحويل 1 ريال. اكتب مبلغًا من ريال واحد وبحد أقصى منزلتين عشريتين", "The minimum send amount is 1 SAR. Enter at least 1 SAR with at most two decimal places");
         var question = Regex.IsMatch(text, @"^(?:كيف|وش|ايش|هل|متى|ليش|كم رسوم|how|what|when|why|can you)\b", RegexOptions.IgnoreCase);
         var start = !question && Regex.IsMatch(text, @"\b(?:حول|احول|حوله|تحويل|send|transfer)\b", RegexOptions.IgnoreCase);
         var editAmount = !question && Regex.IsMatch(text, @"^(?:(?:ابي|ابغى|اريد|ممكن|please|i want to)\s+)?(?:عدل|اعدل|غير|اغير|change|edit|update)\s+(?:المبلغ|مبلغ|(?:the\s+)?amount)\b", RegexOptions.IgnoreCase);
@@ -184,11 +196,8 @@ public static class TransferConversation
         { var digits = Regex.Replace(phone.Value, @"\D", ""); draft.RecipientPhone = digits.StartsWith("05") ? "966" + digits[1..] : digits; text = text.Remove(phone.Index, phone.Length); changed = true; }
         var note = Regex.Match(text, @"(?:\b(?:ملاحظة|ملاحظه|note|for)\s*[:：]?\s*)(.+)$", RegexOptions.IgnoreCase);
         if (note.Success) { draft.Note = Regex.Replace(note.Groups[1].Value.Trim(), @"[*_~`\r\n]", " "); text = text[..note.Index]; changed = true; }
-        var amount = Regex.Match(text, @"(?<![\d.])(\d{1,7}(?:[.٫]\d{1,2})?)\s*(?:ريال(?: سعودي)?|SAR|ر\.س|riyals?)\b", RegexOptions.IgnoreCase);
-        if (!amount.Success && (draft.RequestedField == "amount" || Regex.IsMatch(text, @"\b(?:حول|حوله|احول|send|transfer)\b", RegexOptions.IgnoreCase)))
-            amount = Regex.Match(text, @"(?<![\d.])(\d{1,7}(?:[.٫]\d{1,2})?)(?![\d.])");
-        if (amount.Success && decimal.TryParse(amount.Groups[1].Value.Replace('٫', '.'), CultureInfo.InvariantCulture, out var value) && value > 0)
-        { draft.Amount = value; text = text.Remove(amount.Index, amount.Length); changed = true; }
+        if (SendAmount.TryExtract(text, draft.RequestedField == "amount" || Regex.IsMatch(text, @"\b(?:حول|حوله|احول|send|transfer|المبلغ|amount)\b", RegexOptions.IgnoreCase), out var value, out var remaining) && SendAmount.Valid(value))
+        { draft.Amount = value; text = remaining; changed = true; }
         text = Regex.Replace(text.Trim(), @"^(?:(?:ابي|ابغى|اريد|جرب|نجرب|please|i want to)\s+)*(?:حول|حوله|احول|تحويل|send|transfer)\s*(?:(?:الى|to)\s+|ل)?|^(?:غير|عدل|change|edit)\s+(?:المستفيد|مستفيد|recipient|المبلغ|amount)\s*(?:الى|to)?\s*", "", RegexOptions.IgnoreCase).Trim();
         text = Regex.Replace(text, @"^(?:رقم(?: جوال)?|جوال|mobile(?: number)?|phone(?: number)?)\s*[:：]?\s*$", "", RegexOptions.IgnoreCase);
         text = Regex.Replace(text, @"^(?:الى|to)\s+", "", RegexOptions.IgnoreCase).Trim();
@@ -209,9 +218,10 @@ public static class TransferConversation
             var names = s.Contacts.Where(c => c.Phone == d.RecipientPhone).Select(c => c.Name).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
             if (names.Count == 1) d.RecipientName = names[0];
         }
-        if (d.RecipientName is null) { d.RequestedField = "recipientName"; return Say(s, "وش اسم المستفيد؟ تقدر تشارك جهة الاتصال", "What's the recipient's name? You can share their contact"); }
+        if (d.RecipientName is null && d.RecipientPhone is null) { d.RequestedField = "recipientName"; return Say(s, "وش اسم المستفيد؟ تقدر تشارك جهة الاتصال", "What's the recipient's name? You can share their contact"); }
         if (d.RecipientPhone is null && d.RecipientName is not null) d.RecipientPhone = FindPhone(s, d.RecipientName);
         if (d.RecipientPhone is null) { d.RequestedField = "recipientPhone"; return Say(s, $"وش رقم جوال {d.RecipientName}؟ أو شارك جهة الاتصال", $"What's {d.RecipientName}'s mobile number? Or share their contact"); }
+        if (d.Amount is not null && !SendAmount.Valid(d.Amount.Value)) { d.Amount = null; Invalidate(d); }
         if (d.Amount is null) { d.RequestedField = "amount"; return Say(s, "كم تبي تحوّل بالريال السعودي؟", "How much would you like to send in SAR?"); }
         d.RequestedField = "review";
         d.ReviewId = Guid.NewGuid().ToString("N");
@@ -219,7 +229,7 @@ public static class TransferConversation
         s.PendingReviewButton = d.ReviewId;
         var amount = d.Amount.Value.ToString("0.00", CultureInfo.InvariantCulture);
         return Say(s,
-            $"*ملخص التحويل*\n*المرسل:* {s.Name}\n*المستفيد:* {d.RecipientName}\n*الجوال:* {DisplayPhone(d.RecipientPhone)}\n*المبلغ:* {amount} ريال سعودي" + (d.Note is null ? "" : $"\n*الملاحظة:* {d.Note}") + "\nراجع البيانات أو اطلب تعديلها. ما تم تحويل أي مبلغ",
-            $"*Send summary*\n*Sender:* {s.Name}\n*Recipient:* {d.RecipientName}\n*Mobile:* {DisplayPhone(d.RecipientPhone)}\n*Amount:* {amount} SAR" + (d.Note is null ? "" : $"\n*Note:* {d.Note}") + "\nReview the details or request an edit. No money has been sent");
+            $"*ملخص التحويل*\n*المرسل:* {s.Name}\n*المستفيد:* {d.RecipientName ?? "رقم الجوال"}\n*الجوال:* {DisplayPhone(d.RecipientPhone)}\n*المبلغ:* {amount} ريال سعودي" + (d.Note is null ? "" : $"\n*الملاحظة:* {d.Note}") + "\nراجع البيانات أو اطلب تعديلها. ما تم تحويل أي مبلغ",
+            $"*Send summary*\n*Sender:* {s.Name}\n*Recipient:* {d.RecipientName ?? "Mobile number"}\n*Mobile:* {DisplayPhone(d.RecipientPhone)}\n*Amount:* {amount} SAR" + (d.Note is null ? "" : $"\n*Note:* {d.Note}") + "\nReview the details or request an edit. No money has been sent");
     }
 }
