@@ -7,9 +7,11 @@ using Npgsql;
 namespace RePay.WhatsAppPoc.Services;
 
 public sealed record ChatTurn(string Role, string Text);
+public sealed record SharedContact(string Name, string Phone);
 public sealed class ConversationState
 {
     public string? Name { get; set; }
+    public List<SharedContact> Contacts { get; set; } = [];
     public string Language { get; set; } = "ar";
     public TransferDraft? Transfer { get; set; }
     public string? PendingReviewButton { get; set; }
