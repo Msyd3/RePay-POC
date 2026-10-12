@@ -38,7 +38,7 @@ var en = new ConversationState { Name = "John Smith" };
 reply = await Reply(en, "send 20 SAR to Mohammed");
 Check(en.Transfer?.RecipientName == "Mohammed" && en.Transfer.Amount == 20 && reply.Contains("mobile"), "English amount-first transfer");
 reply = await Reply(en, "0500000000");
-Check(en.Language == "en" && reply.Contains("Transfer summary") && !reply.Contains("المبلغ"), "Numeric continuation retains English");
+Check(en.Language == "en" && reply.Contains("Send summary") && !reply.Contains("المبلغ"), "Numeric continuation retains English");
 reply = await Reply(en, "change my name to Jane Doe");
 Check(en.Name == "Jane Doe" && en.Transfer?.Amount == 20, "English account rename preserves transfer");
 reply = await Reply(en, "ابي اشتري جوال");
@@ -74,7 +74,7 @@ await app.HandleAsync(Payload("c", new { body = "John Smith" }), default);
 using (var json = JsonDocument.Parse(handler.Bodies.Last()))
 {
  var root = json.RootElement;
- Check(root.GetProperty("type").GetString() == "interactive" && root.GetProperty("interactive").GetProperty("action").GetProperty("buttons")[0].GetProperty("reply").GetProperty("title").GetString() == "Review transfer", "Outbound Meta review is native button, no URL");
+ Check(root.GetProperty("type").GetString() == "interactive" && root.GetProperty("interactive").GetProperty("action").GetProperty("buttons")[0].GetProperty("reply").GetProperty("title").GetString() == "Review send", "Outbound Meta review is native button, no URL");
 }
 var count = handler.Bodies.Count;
 await app.HandleAsync(Payload("c", new { body = "John Smith" }), default);
@@ -121,7 +121,7 @@ Check(reply.Contains("الثنائي") && !reply.Contains("للتحويل"), "Un
 reply = await Reply(welcome, "محمد السالم");
 Check(reply.Contains("يا هلا محمد السالم") && reply.Contains("\n\nللتحويل السريع") && welcome.Name == "محمد السالم", "Saved name produces personalized welcome on separate line");
 reply = await Reply(welcome, "hello");
-Check(reply.Contains("Hi محمد السالم") && reply.Contains("For a quick transfer"), "Known customer greeted in current message language");
+Check(reply.Contains("Hi محمد السالم") && reply.Contains("To send money quickly"), "Known customer greeted in current message language");
 reply = await Reply(welcome, "وش هي ري باي؟");
 Check(reply == "ري باي هي محفظة رقمية تجعل عمليات التحويل سهلة زي إرسال رسالة" && welcome.Language == "ar", "Arabic RePay definition is exact requested copy");
 reply = await Reply(welcome, "what is RePay?");
@@ -142,6 +142,25 @@ Check(welcome.Transfer?.RecipientPhone is null && reply.Contains("رقم جوا�
 var bilingual = new ConversationState { Name = "John Smith" };
 reply = await Reply(bilingual, "حول John Smith ٢٠ ريال");
 Check(bilingual.Language == "ar" && reply.Contains("رقم"), "Arabic request with English name stays Arabic");
+var fresh = new ConversationState { Name = "محمد السالم" };
+await Reply(fresh, "contact:محمد العلي 0500000000");
+await Reply(fresh, "20");
+var previousReview = fresh.Transfer!.ReviewId;
+reply = await Reply(fresh, "0500000000");
+Check(fresh.Transfer is { Amount: null } && fresh.Transfer.RecipientName == "محمد العلي" && fresh.Transfer.ReviewId is null && reply.Contains("كم"), "Same phone starts new send without reusing old amount");
+await Reply(fresh, "35");
+reply = await Reply(fresh, "عدل المبلغ");
+Check(fresh.Transfer is { Amount: null } && fresh.Transfer.RequestedField == "amount" && reply.Contains("كم") && !reply.Contains("تقصد"), "Arabic edit amount directly asks new amount without model");
+await Reply(fresh, "50");
+reply = await Reply(fresh, "change the amount");
+Check(fresh.Transfer?.Amount is null && reply.Contains("How much") && !reply.Contains("Do you mean"), "English edit amount directly asks new amount");
+await Reply(fresh, "60");
+reply = await Reply(fresh, "حول لمحمد");
+Check(fresh.Transfer?.Amount is null && reply.Contains("كم"), "Fresh named send never inherits completed amount");
+await Reply(fresh, "حوله ٢٠");
+Check(fresh.Transfer?.Amount == 20 && fresh.Transfer.RecipientPhone == "966500000000", "Pronoun while waiting for amount retains recipient");
+reply = await Reply(fresh, "عدل المبلغ إلى ٧٠ ريال");
+Check(fresh.Transfer?.Amount == 70 && fresh.PendingReviewButton is not null, "Explicit Arabic amount edit rebuilds summary");
 Console.WriteLine("All transfer checks passed");
 
 sealed class TestProvider : IAgentProvider

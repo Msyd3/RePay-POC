@@ -11,7 +11,7 @@ public sealed class MetaWhatsAppClient(HttpClient http, IOptions<RePayOptions> o
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, $"https://graph.facebook.com/{_options.MetaGraphApiVersion}/{_options.MetaPhoneNumberId}/messages");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.MetaAccessToken);
-        request.Content = JsonContent.Create(new { messaging_product = "whatsapp", to, type = "interactive", interactive = new { type = "button", body = new { text }, action = new { buttons = new[] { new { type = "reply", reply = new { id = "review:" + reviewId, title = language == "en" ? "Review transfer" : "مراجعة التحويل" } } } } } });
+        request.Content = JsonContent.Create(new { messaging_product = "whatsapp", to, type = "interactive", interactive = new { type = "button", body = new { text }, action = new { buttons = new[] { new { type = "reply", reply = new { id = "review:" + reviewId, title = language == "en" ? "Review send" : "مراجعة التحويل" } } } } } });
         using var response = await http.SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
     }

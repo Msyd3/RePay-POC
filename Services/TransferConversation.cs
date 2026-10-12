@@ -33,7 +33,7 @@ public static class TransferConversation
         var text = ConversationLifecycle.EnglishDigits(NameConversation.Normalize(input));
         var draft = s.Transfer;
         if (Regex.IsMatch(text, @"^(?:(?:وش|ايش|ما)\s+(?:هي\s+|هو\s+)?(?:ري\s*باي|ريبای|ريبـاي|repay)|what(?:'s| is)\s+repay)\s*[?؟]?$", RegexOptions.IgnoreCase))
-            return Say(s, "ري باي هي محفظة رقمية تجعل عمليات التحويل سهلة زي إرسال رسالة", "RePay is a digital wallet that makes money transfers as easy as sending a message");
+            return Say(s, "ري باي هي محفظة رقمية تجعل عمليات التحويل سهلة زي إرسال رسالة", "RePay is a digital wallet that makes sending money as easy as sending a message");
         if (ServiceConversation.IsCasualMessage(input) && Regex.IsMatch(text, @"^(?:يا\s+)?(?:هلا|اهلا|اهلين|مرحبا|السلام عليكم|hello|hi|hey)\b", RegexOptions.IgnoreCase))
             return Welcome(s);
         if (input.StartsWith("review:"))
@@ -73,18 +73,31 @@ public static class TransferConversation
             return Say(s, "اكتب مبلغًا موجبًا بالريال السعودي، وبحد أقصى منزلتين عشريتين", "Enter a positive amount in SAR with at most two decimal places");
         var question = Regex.IsMatch(text, @"^(?:كيف|وش|ايش|هل|متى|ليش|كم رسوم|how|what|when|why|can you)\b", RegexOptions.IgnoreCase);
         var start = !question && Regex.IsMatch(text, @"\b(?:حول|احول|حوله|تحويل|send|transfer)\b", RegexOptions.IgnoreCase);
+        var editAmount = !question && Regex.IsMatch(text, @"^(?:(?:ابي|ابغى|اريد|ممكن|please|i want to)\s+)?(?:عدل|اعدل|غير|اغير|change|edit|update)\s+(?:المبلغ|مبلغ|(?:the\s+)?amount)\b", RegexOptions.IgnoreCase);
+        if (editAmount && draft is not null)
+        {
+            draft.Amount = null;
+            draft.RequestedField = "amount";
+            Invalidate(draft);
+            Extract(draft, text, false);
+            return Next(s);
+        }
         var contact = input.StartsWith("contact:");
         var hasPhone = Regex.IsMatch(text, @"(?<!\d)(?:\+?966[\s-]*5(?:[\s-]*\d){8}|05(?:[\s-]*\d){8})(?!\d)");
         if (Regex.IsMatch(text, @"\b(?:شراء|اشتري|ادفع|دفع|buy|purchase|shopping|pay)\b", RegexOptions.IgnoreCase))
-            return Say(s, "ري باي هنا للتحويل فقط. تقدر تقول: حول لمحمد 20 ريال", "RePay supports transfers here. You can say: send Mohammed 20 SAR");
+            return Say(s, "ري باي هنا للتحويل فقط. تقدر تقول: حول لمحمد 20 ريال", "You can send money with RePay here. You can say: send Mohammed 20 SAR");
         var namedRecipient = draft is null && s.Name is not null && !s.AwaitingNameChange && !question && ServiceConversation.TryGetName(input, out _);
         if (start || contact || namedRecipient || hasPhone && !question || draft is not null && !question)
         {
+            // A completed draft is a separate request from a fresh recipient/number/start.
+            // Pronoun + amount while still collecting fields continues the current request.
+            if (draft?.RequestedField == "review" && (start || contact || hasPhone))
+                draft = s.Transfer = null;
             if (draft is null) { draft = s.Transfer = new(); s.TransferExamples++; }
             if (start) s.AwaitingNameChange = false;
             if (Regex.IsMatch(text, @"^(?:كمل|نكمل|continue|resume)$", RegexOptions.IgnoreCase)) return Next(s);
             if (Regex.IsMatch(text, @"^(?:تاكيد|اكد|نعم|تمام|confirm|yes|ok)$", RegexOptions.IgnoreCase))
-                return draft.ReviewId is null ? Next(s) : Say(s, "استخدم زر «مراجعة التحويل». ما تم تحويل أي مبلغ", "Use the 'Review transfer' button. No money has been sent");
+                return draft.ReviewId is null ? Next(s) : Say(s, "استخدم زر «مراجعة التحويل». ما تم تحويل أي مبلغ", "Use the 'Review send' button. No money has been sent");
             var changed = Extract(draft, text, contact);
             if (!changed && draft.RequestedField == "sender") return Say(s, "اكتب اسمك الأول واسم العائلة عشان نكمل", "Please enter your first and last name to continue");
             if (!changed && draft.RequestedField == "recipientName" && ServiceConversation.TryGetName(input, out var recipient))
@@ -142,7 +155,7 @@ public static class TransferConversation
         s.Welcomed = true;
         if (s.Name is null || !NameConversation.TryFullName(s.Name, out _))
         { s.AwaitingNameChange = true; return Say(s, "يا هلا 👋🏼 وش اسمك الثنائي؟ الاسم الأول واسم العائلة", "Hi 👋🏼 What's your full name? First and last name"); }
-        return Say(s, $"يا هلا {s.Name} 👋🏼\n\nللتحويل السريع حط اسم المستفيد أو رقم جواله أو شارك جهة الاتصال", $"Hi {s.Name} 👋🏼\n\nFor a quick transfer, enter the recipient's name or mobile number, or share their contact");
+        return Say(s, $"يا هلا {s.Name} 👋🏼\n\nللتحويل السريع حط اسم المستفيد أو رقم جواله أو شارك جهة الاتصال", $"Hi {s.Name} 👋🏼\n\nTo send money quickly, enter the recipient's name or mobile number, or share their contact");
     }
     private static string ContactKey(string name) => NameConversation.Normalize(name).ToLowerInvariant();
     private static string? FindPhone(ConversationState s, string name)
@@ -191,6 +204,11 @@ public static class TransferConversation
         if (s.Name is null || !NameConversation.TryFullName(s.Name, out _))
         { d.RequestedField = "sender"; return Say(s, "عشان نكمل، وش اسمك الثنائي؟ الاسم الأول واسم العائلة", "To continue, what's your full name? First and last name"); }
 
+        if (d.RecipientName is null && d.RecipientPhone is not null)
+        {
+            var names = s.Contacts.Where(c => c.Phone == d.RecipientPhone).Select(c => c.Name).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+            if (names.Count == 1) d.RecipientName = names[0];
+        }
         if (d.RecipientName is null) { d.RequestedField = "recipientName"; return Say(s, "وش اسم المستفيد؟ تقدر تشارك جهة الاتصال", "What's the recipient's name? You can share their contact"); }
         if (d.RecipientPhone is null && d.RecipientName is not null) d.RecipientPhone = FindPhone(s, d.RecipientName);
         if (d.RecipientPhone is null) { d.RequestedField = "recipientPhone"; return Say(s, $"وش رقم جوال {d.RecipientName}؟ أو شارك جهة الاتصال", $"What's {d.RecipientName}'s mobile number? Or share their contact"); }
@@ -202,6 +220,6 @@ public static class TransferConversation
         var amount = d.Amount.Value.ToString("0.00", CultureInfo.InvariantCulture);
         return Say(s,
             $"*ملخص التحويل*\n*المرسل:* {s.Name}\n*المستفيد:* {d.RecipientName}\n*الجوال:* {DisplayPhone(d.RecipientPhone)}\n*المبلغ:* {amount} ريال سعودي" + (d.Note is null ? "" : $"\n*الملاحظة:* {d.Note}") + "\nراجع البيانات أو اطلب تعديلها. ما تم تحويل أي مبلغ",
-            $"*Transfer summary*\n*Sender:* {s.Name}\n*Recipient:* {d.RecipientName}\n*Mobile:* {DisplayPhone(d.RecipientPhone)}\n*Amount:* {amount} SAR" + (d.Note is null ? "" : $"\n*Note:* {d.Note}") + "\nReview the details or request an edit. No money has been sent");
+            $"*Send summary*\n*Sender:* {s.Name}\n*Recipient:* {d.RecipientName}\n*Mobile:* {DisplayPhone(d.RecipientPhone)}\n*Amount:* {amount} SAR" + (d.Note is null ? "" : $"\n*Note:* {d.Note}") + "\nReview the details or request an edit. No money has been sent");
     }
 }
