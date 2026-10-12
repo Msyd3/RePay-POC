@@ -7,6 +7,8 @@ public static class ConversationLifecycle
     {
         if (state.LastMessageAt is null || now - state.LastMessageAt < IdleTimeout) return false;
         state.Demo = null;
+        state.Transfer = null;
+        state.PendingReviewButton = null;
         state.AwaitingNameChange = false;
         state.Focus = null;
         state.AwaitingClarification = false;

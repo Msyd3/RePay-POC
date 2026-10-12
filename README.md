@@ -1,71 +1,24 @@
-# RePay POC
+# RePay WhatsApp transfer POC
 
-A conversational introduction to RePay's upcoming services. RePay plans to offer browsing, transfers, and payments with gradual availability to users. This version only answers service questions: it does not search, browse, prepare checkout, transfer money, or make payments.
+ASP.NET Core (.NET 10) chatbot using WhatsApp Cloud API, Groq/Gemini, PostgreSQL (Neon) or SQLite, and Render Docker hosting.
 
 ## Conversation
 
-New Saudi WhatsApp users receive:
+- Arabic input gets Arabic replies; English input gets English replies. Numeric replies and contact cards retain the conversation language.
+- Transfers only: payment, shopping and product search are removed.
+- Start with `حول لمحمد ٢٠ ريال`, `send Mohammed 20 SAR`, a Saudi mobile number, or a shared WhatsApp contact. Shared contact followed by `حوله ٢٠` continues the same draft.
+- Collect recipient name, Saudi mobile, amount in SAR, optional note and sender first/last name. Ask only missing fields. Never read an address book automatically.
+- Sender name can be edited in Arabic or English while keeping the transfer draft. Changing recipient name clears the previous recipient phone. Every edit invalidates the prior review button.
+- Review uses a native WhatsApp reply button, not a displayed URL. Button IDs identify a particular draft revision and expire after three minutes. Tapping it currently explains that the confirmation page will be implemented later. No Apple Pay, financial execution, recipient SMS, OTP, bank linkage or withdrawal is implemented.
+- Webhooks reject old timestamps and deduplicate message IDs. Generated text/button state is persisted before sending so retries reuse the same response. Per-user locks serialize events on this single-instance POC.
+- Phone numbers are masked in review/history and withheld from model context. Recipient phone is retained only in the persisted draft for future review integration.
 
-> أهلًا بك في ري باي 👋🏼
->
-> أنا مساعدك للتعرّف على خدمات ري باي القادمة في التصفح والتحويل والدفع بأمان، دون مشاركة بياناتك المالية الحساسة مع الوكيل. الخدمات بتتاح تدريجيًا للمستخدمين، وحاليًا أقدر أجاوب عن أسئلتك عنها.
->
-> ممكن تشرفني باسمك؟
+## Configuration
 
-The sender number comes from the signed WhatsApp webhook; users are never asked to type it. Once their name is saved, subsequent messages go directly to a natural service conversation without numbered menus or a footer. Questions during onboarding can be answered without forcing a name. No launch dates, pricing, licensing claims, or financial transactions are promised.
+Use the existing `RePay` configuration/environment variables in `Services/RePayOptions.cs`. Do not commit credentials. Render's free instance can sleep when idle. PostgreSQL is recommended for persistence across redeploys; local SQLite requires persistent storage.
 
-Groq uses the pinned text-only `qwen/qwen3.8-27b` model; stale Compound settings are ignored deliberately. Gemini is an optional fallback without grounding or tools. Both share one service policy and bounded recent conversation context. Phone numbers are not sent to the model. `SafeBrowserAgent` is legacy code and is not registered or called by this flow.
+## Checks
 
-## Storage
+`dotnet run --project tests/ConversationChecks.csproj`
 
-Set `RePay__DatabaseConnectionString` to a PostgreSQL Npgsql connection string in your hosting secrets:
-
-```text
-Host=YOUR-HOST;Database=neondb;Username=YOUR-USER;Password=YOUR-PASSWORD;SSL Mode=VerifyFull
-```
-
-The app creates `repay_conversations` on startup with a unique phone key. It stores the name, onboarding state, last eight conversation messages, and last 100 processed message IDs. The database must be private; never commit connection strings or customer data. Old `App_Data/users.json` names are imported without overwriting existing database rows when that file is still available.
-
-Without a connection string, local development uses SQLite at `App_Data/repay.db`. Set `RePay__DataDirectory` to use a persistent mounted directory. **Render's free web-service filesystem is ephemeral: configure external PostgreSQL before relying on name retention across deploys/restarts.** Creating the schema in code alone does not provision or connect a hosted database.
-
-This POC runs one application instance. Message serialization is local to that instance; a multi-instance deployment needs distributed coordination. Recent message deduplication prevents normal webhook repeats, but a crash after Meta accepts a reply and before the database save can still duplicate a reply. Add a durable inbox/outbox before production.
-
-## Configuration and running
-
-Use environment variables from `.env.example` (the app does not auto-load that file). Store all secrets in Render's environment secret settings, never in source or `appsettings.json`.
-
-```bash
-dotnet run --project RePay.WhatsAppPoc.csproj
-```
-
-For Render, use the included Dockerfile/Blueprint and configure PostgreSQL separately. Verify `/health`, then set Meta's Callback URL to `https://YOUR-HOST/webhooks/whatsapp` and Verify Token to the same value as `RePay__WhatsAppVerifyToken`. Subscribe the app/WABA to `messages`. Keep `RePay__MetaAccessToken` valid with WhatsApp messaging permissions; webhook verification alone does not test outbound authorization.
-
-A failed webhook returns 503 so Meta can retry. Model failures use a short service-information fallback; failed delivery is not silently acknowledged as success. Database startup failures stop startup rather than resetting identities. Run `dotnet run --project tests/ConversationChecks.csproj` to check onboarding, restart persistence, deduplication, Saudi-only handling, and tool-free model requests without live messages.
-
-Conversation updates: short contextual replies, future transfer/purchase examples with approval, and https://repay.sa on request. Users can say `غير اسمي إلى خالد` or `ابي اغير اسمي` then provide their preferred name. Name changes persist in the existing database. No browsing or transaction tools are enabled.
-
-## Interactive examples and private analytics
-
-`جرب تحويل` collects a recipient name, phone, or one shared WhatsApp contact and a SAR amount; the final message is explicitly a simulation. `جرب شراء` produces an example immediately after the product, without assuming a geographic scope; the user's product and store preferences guide the example. The app picks an explicitly illustrative amount automatically from synthetic product-category options, never a quote. A supplied budget selects an exact option or the nearest option within 20%; differences are shown, and a hard ceiling is never exceeded. If no eligible option exists, the app asks about the product/specifications and clears the obsolete summary instead of assuming a new amount. Budgets can be added, changed or removed without restarting the purchase flow. Summaries are followed by a separate confirmation message; confirmation repeats the example and resets the flow without any transaction. All example amounts use Saudi riyals. Neither calls search, browser, bank, or payment tools. Store integration is not assumed for the proposed future flow; availability is not guaranteed.
-
-`/analytics` shows aggregate numbers only. Set `RePay__AnalyticsPassword` to a private password. The API fails closed when unset. The password is entered in the page and sent via an Authorization header, never a URL, and held only in page memory. Use HTTPS. Authenticated analytics returns names and only the last four phone digits; full phone numbers and message text are never returned. The API limits requests to 30 per minute.
-
-Users = all stored unique WhatsApp senders. Conversations = sessions separated by 5 minutes; messages = successfully replied-to messages; search examples = shopping examples started; transfer examples = transfer examples started; payment examples = purchase summaries produced. Activity counters start with this release and are not reconstructed from truncated old histories. Cancelled examples remain in start counters. Actual financial transactions stay zero. Duplicate webhook retries reuse a persisted pending reply instead of advancing a demo twice.
-
-The dashboard bundles the owner-supplied Thmanyah Sans webfont so it renders across devices. Copyright © 2026 thmanyah Publishing and Distribution.
-
-Render Free sleeps after 15 idle minutes. Unambiguous examples avoid model latency; contextual intent interpretation uses Groq with Gemini fallback, and each AI provider has a 15-second timeout; these cannot remove hosting cold starts. An always-on instance is required for consistently prompt first replies.
-
-Conversations reset after five idle minutes on the next incoming message, preserving saved identity, counters and deduplication. Registration and user-requested name changes require a multi-part name. Existing saved names remain valid and do not trigger automatic full-name upgrade prompts. Name editing takes priority over examples. A new transfer or purchase request can switch example types at any step. Summaries identify RePay as an illustrative source account only. Outgoing sentence-ending periods are removed without altering decimals or URLs.
-
-### Analytics phone access (optional)
-By default analytics still requires `RePay__AnalyticsPassword`. Setting `RePay__AnalyticsPhone` switches login to the configured local Saudi mobile number. This is a low-security access gate, not phone ownership verification: anyone knowing the number can access analytics. Keep the value only in hosting environment variables, never in frontend code. Arabic and Persian digits are accepted and normalized to ASCII. Rate limiting remains enabled. Clear `RePay__AnalyticsPhone` to restore password access.
-
-Analytics returns only a masked local phone (e.g. `054 XXXX 9449`), never the complete phone. Counters, timestamps and outgoing message digits use Latin numerals.
-
-### Incoming message replay protection
-Messages older than five minutes, more than one minute in the future, or without a valid Meta timestamp are acknowledged without sending a reply or updating the conversation. This deliberately discards delayed messages after hosting outages instead of answering them later. Status-only events remain ignored. Processing uses a 60-second deadline linked to application shutdown, independent of the webhook client's disconnection, so a dropped HTTP connection does not cancel saving a successful delivery checkpoint. A process crash or an ambiguous outbound timeout can still duplicate delivery; this remains a single-instance POC, not an exactly-once delivery guarantee.
-
-
-### Contextual intent and task changes
-The router reads the latest user message, recent role history, conversation focus, and active example stage before accepting ambiguous text as a name, recipient, product, amount or confirmation. The model returns only an allowlisted intent and an optional detail copied from the current message. Unclear or unavailable interpretations ask a clarification question without advancing the example. Personal name changes cancel an active example; explicit transfers/purchases replace previous tasks, and new-topic decisions discard the old task. Editing a recipient or amount regenerates its summary for fresh confirmation. The model has no financial execution tools and receives redacted phone numbers. Intent interpretation has a 20-second total budget; real-provider intent quality still requires WhatsApp acceptance testing.
+Checks cover Arabic/English transfers, shared contacts, digit normalization, sender name collection and edits, recipient phone isolation, optional notes, cancelled requests, stale review buttons, review expiry, actual Meta button payloads, stale/duplicate webhooks, send retries, and persistence. Semantic intent tests mock the model; live natural-language behavior still depends on the configured provider.
