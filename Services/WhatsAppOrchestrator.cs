@@ -18,7 +18,7 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             if (receivedAt - message.SentAt > MaxIncomingAge || message.SentAt - receivedAt > TimeSpan.FromMinutes(1)) continue;
             if (!Regex.IsMatch(message.Phone, @"^9665[0-9]{8}$"))
             {
-                await whatsapp.SendTextAsync(message.Phone, "خدمة ري باي متاحة حاليًا للأرقام السعودية فقط", ct);
+                await whatsapp.SendTextAsync(message.Phone, Regex.IsMatch(message.Text, @"[\u0621-\u064A]") ? "خدمة ري باي متاحة حاليًا للأرقام السعودية فقط" : "RePay is currently available for Saudi mobile numbers only", ct);
                 continue;
             }
             await using var session = await store.OpenSessionAsync(message.Phone, ct);
@@ -36,7 +36,7 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             if (retry)
                 reply = state.PendingReply!;
             else
-                reply = await ContextConversation.ReplyAsync(state, message.Text, agent, ct);
+                reply = await TransferConversation.ReplyAsync(state, message.Text, agent, ct);
             reply = ConversationLifecycle.Format(reply);
             if (state.PendingFollowUp is not null) state.PendingFollowUp = ConversationLifecycle.Format(state.PendingFollowUp);
             // Persist the generated reply and demo transition, so retries do not advance the example twice.
@@ -45,7 +45,9 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             await session.SaveAsync(ct);
             if (state.PendingReplyIndex == 0)
             {
-                await whatsapp.SendTextAsync(message.Phone, reply, ct);
+                if (state.PendingReviewButton is { } reviewId)
+                    await whatsapp.SendReviewAsync(message.Phone, reply, reviewId, state.Language, ct);
+                else await whatsapp.SendTextAsync(message.Phone, reply, ct);
                 state.PendingReplyIndex = 1;
                 await session.SaveAsync(ct);
             }
@@ -61,6 +63,7 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             state.MessageCount++;
             state.PendingMessageId = null;
             state.PendingReply = null;
+            state.PendingReviewButton = null;
             state.Turns.Add(new ChatTurn("user", RedactPhone(message.Text)));
             state.Turns.Add(new ChatTurn("assistant", RedactPhone(reply)));
             if (state.PendingFollowUp is not null) state.Turns.Add(new ChatTurn("assistant", state.PendingFollowUp));
@@ -92,12 +95,15 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
                 var sentAt = DateTimeOffset.FromUnixTimeSeconds(seconds);
                 if (message.TryGetProperty("text", out var text) && text.TryGetProperty("body", out var body))
                     yield return (id.GetString()!, from.GetString()!, body.GetString()!, sentAt);
+                else if (message.TryGetProperty("interactive", out var interactive) && interactive.TryGetProperty("button_reply", out var button) && button.TryGetProperty("id", out var buttonId))
+                    yield return (id.GetString()!, from.GetString()!, buttonId.GetString()!, sentAt);
                 else if (message.TryGetProperty("contacts", out var contacts) && contacts.GetArrayLength() > 0)
                 {
+                    if (contacts.GetArrayLength() != 1) { yield return (id.GetString()!, from.GetString()!, "multiple_contacts", sentAt); continue; }
                     var contact = contacts[0];
                     var name = contact.TryGetProperty("name", out var n) && n.TryGetProperty("formatted_name", out var full) ? full.GetString() : "جهة اتصال";
-                    var phone = contact.TryGetProperty("phones", out var phones) && phones.GetArrayLength() > 0 && phones[0].TryGetProperty("phone", out var number) ? number.GetString() : "";
-                    yield return (id.GetString()!, from.GetString()!, $"{name} {phone}".Trim(), sentAt);
+                    var phone = contact.TryGetProperty("phones", out var phones) && phones.GetArrayLength() == 1 && phones[0].TryGetProperty("phone", out var number) ? number.GetString() : "";
+                    yield return (id.GetString()!, from.GetString()!, $"contact:{name} {phone}".Trim(), sentAt);
                 }
             }
         }
