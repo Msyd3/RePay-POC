@@ -106,6 +106,13 @@ reviewMessage["interactive"] = System.Text.Json.Nodes.JsonNode.Parse("""{"button
 var reviewPayload = reviewNode.ToJsonString();
 await app.HandleAsync(reviewPayload, default);
 Check(handler.Bodies.Last().Contains("expired"), "Actual interactive reply webhook reaches review validation");
+var invalid = new ConversationState { Name = "John Smith" };
+await Reply(invalid, "send Mohammed -20 SAR");
+Check(invalid.Transfer is null, "Negative amount cannot become positive transfer");
+await Reply(invalid, "send Mohammed 0 SAR");
+Check(invalid.Transfer is null, "Zero amount rejected before creating review");
+await Reply(invalid, "رقم جوال 0500000000");
+Check(invalid.Transfer is { RecipientName: null } && invalid.Transfer.RecipientPhone == "966500000000", "Phone label cannot become recipient name");
 Console.WriteLine("All transfer checks passed");
 
 sealed class TestProvider : IAgentProvider

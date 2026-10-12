@@ -62,6 +62,10 @@ public static class TransferConversation
         { s.Transfer = null; return Say(s, "تم إلغاء الطلب، ما تم تحويل أي مبلغ", "Request cancelled. No money has been sent"); }
         if (input == "multiple_contacts") return Say(s, "شارك جهة اتصال واحدة وحدد المستفيد", "Please share one contact and specify the recipient");
         if (input.Length > 250) return Say(s, "اختصر التفاصيل إلى اسم المستفيد وجواله والمبلغ، والملاحظة اختيارية", "Keep the details to recipient, mobile number, amount, and an optional short note");
+        var explicitAmount = Regex.Match(text, @"(?<![\d.])(-?\d+(?:[.٫]\d+)?)\s*(?:ريال|SAR|riyals?)\b", RegexOptions.IgnoreCase);
+        if (!explicitAmount.Success && draft?.RequestedField == "amount") explicitAmount = Regex.Match(text, @"^(-?\d+(?:[.٫]\d+)?)$");
+        if (explicitAmount.Success && (!decimal.TryParse(explicitAmount.Groups[1].Value.Replace('٫', '.'), CultureInfo.InvariantCulture, out var enteredAmount) || enteredAmount <= 0 || enteredAmount > 9999999 || Regex.IsMatch(explicitAmount.Groups[1].Value, @"[.٫]\d{3,}")))
+            return Say(s, "اكتب مبلغًا موجبًا بالريال السعودي، وبحد أقصى منزلتين عشريتين", "Enter a positive amount in SAR with at most two decimal places");
         var question = Regex.IsMatch(text, @"^(?:كيف|وش|ايش|هل|متى|ليش|كم رسوم|how|what|when|why|can you)\b", RegexOptions.IgnoreCase);
         var start = !question && Regex.IsMatch(text, @"\b(?:حول|احول|حوله|تحويل|send|transfer)\b", RegexOptions.IgnoreCase);
         var contact = input.StartsWith("contact:");
@@ -71,6 +75,7 @@ public static class TransferConversation
         if (start || contact || hasPhone && !question || draft is not null && !question)
         {
             if (draft is null) { draft = s.Transfer = new(); s.TransferExamples++; }
+            if (start) s.AwaitingNameChange = false;
             if (Regex.IsMatch(text, @"^(?:كمل|نكمل|continue|resume)$", RegexOptions.IgnoreCase)) return Next(s);
             if (Regex.IsMatch(text, @"^(?:تاكيد|اكد|نعم|تمام|confirm|yes|ok)$", RegexOptions.IgnoreCase))
                 return draft.ReviewId is null ? Next(s) : Say(s, "استخدم زر «مراجعة التحويل». ما تم تحويل أي مبلغ", "Use the 'Review transfer' button. No money has been sent");
@@ -135,6 +140,7 @@ public static class TransferConversation
         if (amount.Success && decimal.TryParse(amount.Groups[1].Value.Replace('٫', '.'), CultureInfo.InvariantCulture, out var value) && value > 0)
         { draft.Amount = value; text = text.Remove(amount.Index, amount.Length); changed = true; }
         text = Regex.Replace(text.Trim(), @"^(?:(?:ابي|ابغى|اريد|جرب|نجرب|please|i want to)\s+)*(?:حول|حوله|احول|تحويل|send|transfer)\s*(?:(?:الى|to)\s+|ل)?|^(?:غير|عدل|change|edit)\s+(?:المستفيد|مستفيد|recipient|المبلغ|amount)\s*(?:الى|to)?\s*", "", RegexOptions.IgnoreCase).Trim();
+        text = Regex.Replace(text, @"^(?:رقم(?: جوال)?|جوال|mobile(?: number)?|phone(?: number)?)\s*[:：]?\s*$", "", RegexOptions.IgnoreCase);
         text = Regex.Replace(text, @"^(?:الى|to)\s+", "", RegexOptions.IgnoreCase).Trim();
         if (mayName && !Regex.IsMatch(text, @"\b(?:قصدي|اقصد|اسمي|الاسم|اعدله|اعدلها|غيره|غيرها|بدل|instead|change|edit|my|name)\b", RegexOptions.IgnoreCase) && ServiceConversation.TryGetName(text, out var name) && !Regex.IsMatch(text, @"^(?:له|لها|him|her|it|money|ريال|SAR)$", RegexOptions.IgnoreCase))
         { draft.RecipientName = name; if (oldName is not null && oldName != name && !phone.Success) draft.RecipientPhone = null; changed = true; }
