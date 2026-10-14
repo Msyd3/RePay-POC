@@ -53,6 +53,8 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
     {
         if (!string.IsNullOrWhiteSpace(options.Value.DatabaseConnectionString))
             return new NpgsqlConnection(options.Value.DatabaseConnectionString);
+        if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("K_SERVICE")))
+            throw new InvalidOperationException("Cloud Run requires durable PostgreSQL configuration; SQLite is ephemeral.");
         Directory.CreateDirectory(DirectoryPath);
         return new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = Path.Combine(DirectoryPath, "repay.db") }.ToString());
     }

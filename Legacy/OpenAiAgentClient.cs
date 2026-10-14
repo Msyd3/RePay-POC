@@ -22,3 +22,4 @@ public sealed class OpenAiAgentClient(HttpClient http, IOptions<RePayOptions> op
         return json.RootElement.TryGetProperty("output_text", out var output) ? output.GetString() ?? "لم أتمكن من إعداد الرد الآن." : "لم أتمكن من إعداد الرد الآن.";
     }
 }
+

@@ -54,3 +54,4 @@ public static class NameConversation
         return ServiceConversation.TryGetName(name, out name) && name.Split(' ', StringSplitOptions.RemoveEmptyEntries).Length >= 2;
     }
 }
+

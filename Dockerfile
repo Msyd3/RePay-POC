@@ -12,6 +12,9 @@ WORKDIR /app
 COPY --from=build /app/publish ./
 
 ENV ASPNETCORE_URLS=http://0.0.0.0:10000
+ENV RePay__DataDirectory=/tmp/repay
+USER $APP_UID
 EXPOSE 10000
 
 ENTRYPOINT ["dotnet", "RePay.WhatsAppPoc.dll"]
+

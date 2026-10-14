@@ -18,3 +18,4 @@ public sealed class SafeBrowserAgent(HttpClient http, IOptions<RePayOptions> opt
         return await response.Content.ReadAsStringAsync(ct);
     }
 }
+
