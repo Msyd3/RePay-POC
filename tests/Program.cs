@@ -217,7 +217,7 @@ using (var stats = JsonDocument.Parse(JsonSerializer.Serialize(await statsStore.
 {
  var root = stats.RootElement;
  Check(root.GetProperty("totalAmounts").GetDecimal() == 120 && root.GetProperty("averageAmounts").GetDecimal() == 40, "Analytics averages only recorded amounts, preserves available legacy summary");
- Check(root.GetProperty("averageRepeat").GetDecimal() == 1 && root.GetProperty("conversations").GetInt64() == 4, "Repeat average counts return sessions beyond first per user");
+ Check(root.GetProperty("averageRepeat").GetDecimal() == 2 && root.GetProperty("conversations").GetInt64() == 4, "Repeat average counts additional sends beyond first per user");
  Check(root.GetProperty("transfers").GetInt64() == 6 && root.GetProperty("recordedAmounts").GetInt64() == 3, "Historical operation counts do not invent unavailable amounts");
  var row = root.GetProperty("userList")[0];
  Check(row.TryGetProperty("operations", out _) && row.TryGetProperty("repeats", out _) && row.TryGetProperty("conversations", out _) && !row.GetProperty("mobile").GetString()!.Contains("500000010"), "Dashboard rows include requested counters and mask mobile");
