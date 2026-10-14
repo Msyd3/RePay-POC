@@ -1,11 +1,11 @@
 const fs=require('fs'),vm=require('vm'),assert=require('assert');
 const html=fs.readFileSync(require('path').join(__dirname,'../wwwroot/analytics.html'),'utf8');
 const ids=[...html.matchAll(/id="([^"]+)"/g)].map(m=>m[1]);
-function element(){return {textContent:'',hidden:false,disabled:false,value:'',children:[],style:{},attributes:{},setAttribute(k,v){this.attributes[k]=v},querySelector(k){return this.parts[k]},parts:{'.spinner':{hidden:true},'.button-label':{textContent:''}},appendChild(c){this.children.push(c)},replaceChildren(){this.children=[]}}}
+function element(){return {textContent:'',hidden:false,disabled:false,value:'',children:[],style:{},attributes:{},setAttribute(k,v){this.attributes[k]=v},querySelector(k){return this.parts[k]},parts:{'.spinner':{hidden:true},'.button-label':{textContent:''}},append(c){this.children.push(c)},appendChild(c){this.children.push(c)},replaceChildren(){this.children=[]}}}
 const elements=Object.fromEntries(ids.map(id=>[id,element()]));
 for(const id of ['dashboard','actions'])elements[id].hidden=true;
 let resolveRequest;
-const context={document:{getElementById:id=>{assert(elements[id],id);return elements[id]},createElement:element},Intl,Date,AbortController,setTimeout,clearTimeout,fetch:url=>url.includes('login-mode')?Promise.resolve({ok:true,json:async()=>({phone:false})}):new Promise(resolve=>{resolveRequest=resolve})};
+const context={document:{body:{className:"signed-out"},getElementById:id=>{assert(elements[id],id);return elements[id]},createElement:element},Intl,Date,AbortController,setTimeout,clearTimeout,fetch:url=>url.includes('login-mode')?Promise.resolve({ok:true,json:async()=>({phone:false})}):new Promise(resolve=>{resolveRequest=resolve})};
 vm.createContext(context);vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1],context);
 const fixture={users:2,conversations:4,transfers:6,totalAmounts:120,averageAmounts:40,averageRepeat:1,updatedAt:'2026-10-14T12:00:00Z',userList:[{name:'Test user',mobile:'050 XXXX 0000',operations:4,repeats:2,conversations:3}]};
 (async()=>{

@@ -123,7 +123,7 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
             var s = JsonSerializer.Deserialize<ConversationState>(rows.GetString(1))!;
             s.RecordTransferAmount();
             var phone = rows.GetString(0);
-            var repeat = Math.Max(0, s.ConversationCount - 1);
+            var repeat = Math.Max(0, s.TransferExamples - 1);
             userList.Add(new { name = s.Name ?? "لم يحدد الاسم", mobile = ConversationLifecycle.MaskPhone(phone), operations = s.TransferExamples, repeats = repeat, conversations = s.ConversationCount });
             users++;
             conversations += s.ConversationCount;
