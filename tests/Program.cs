@@ -217,10 +217,10 @@ using (var stats = JsonDocument.Parse(JsonSerializer.Serialize(await statsStore.
 {
  var root = stats.RootElement;
  Check(root.GetProperty("totalAmounts").GetDecimal() == 120 && root.GetProperty("averageAmounts").GetDecimal() == 40, "Analytics averages only recorded amounts, preserves available legacy summary");
- Check(root.GetProperty("averageRepeat").GetDecimal() == 2 && root.GetProperty("conversations").GetInt64() == 4, "Repeat average counts additional sends beyond first per user");
- Check(root.GetProperty("transfers").GetInt64() == 6 && root.GetProperty("recordedAmounts").GetInt64() == 3, "Historical operation counts do not invent unavailable amounts");
+ Check(root.GetProperty("averageOperations").GetDecimal() == 1.5m && root.GetProperty("conversations").GetInt64() == 4, "Average operations counts completed summaries per user");
+ Check(root.GetProperty("transfers").GetInt64() == 3 && root.GetProperty("recordedAmounts").GetInt64() == 3, "Operations count completed recorded summaries only");
  var row = root.GetProperty("userList")[0];
- Check(row.TryGetProperty("operations", out _) && row.TryGetProperty("repeats", out _) && row.TryGetProperty("conversations", out _) && !row.GetProperty("mobile").GetString()!.Contains("500000010"), "Dashboard rows include requested counters and mask mobile");
+ Check(row.TryGetProperty("operations", out _) && row.TryGetProperty("averageOperations", out _) && row.TryGetProperty("conversations", out _) && !row.GetProperty("mobile").GetString()!.Contains("500000010"), "Dashboard rows include requested counters and mask mobile");
 }
 await using (var session = await new ConversationStore(statsOptions, new TestEnvironment { ContentRootPath = statsDir }).OpenSessionAsync("966500000010", default))
  Check(session.State.TransferAmountTotal == 80 && session.State.RecordedTransferAmounts == 2, "Aggregate amount history survives restart without active draft");

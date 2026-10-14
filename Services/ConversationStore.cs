@@ -123,18 +123,18 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
             var s = JsonSerializer.Deserialize<ConversationState>(rows.GetString(1))!;
             s.RecordTransferAmount();
             var phone = rows.GetString(0);
-            var repeat = Math.Max(0, s.TransferExamples - 1);
-            userList.Add(new { name = s.Name ?? "لم يحدد الاسم", mobile = ConversationLifecycle.MaskPhone(phone), operations = s.TransferExamples, repeats = repeat, conversations = s.ConversationCount });
+            var repeat = s.RecordedTransferAmounts;
+            userList.Add(new { name = s.Name ?? "لم يحدد الاسم", mobile = ConversationLifecycle.MaskPhone(phone), operations = s.RecordedTransferAmounts, averageOperations = s.ConversationCount == 0 ? 0 : (decimal)s.RecordedTransferAmounts / s.ConversationCount, conversations = s.ConversationCount });
             users++;
             conversations += s.ConversationCount;
-            transfers += s.TransferExamples;
+            transfers += s.RecordedTransferAmounts;
             repeats += repeat;
             recordedAmounts += s.RecordedTransferAmounts;
             totalAmounts += s.TransferAmountTotal;
         }
         return new { userList, users, conversations, transfers, totalAmounts,
             averageAmounts = recordedAmounts == 0 ? 0 : totalAmounts / recordedAmounts,
-            averageRepeat = users == 0 ? 0 : (decimal)repeats / users,
+            averageOperations = users == 0 ? 0 : (decimal)repeats / users,
             recordedAmounts, updatedAt = DateTimeOffset.UtcNow };
     }
 

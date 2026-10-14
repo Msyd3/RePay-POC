@@ -7,7 +7,7 @@ for(const id of ['dashboard','actions'])elements[id].hidden=true;
 let resolveRequest;
 const context={document:{body:{className:"signed-out"},getElementById:id=>{assert(elements[id],id);return elements[id]},createElement:element},Intl,Date,AbortController,setTimeout,clearTimeout,fetch:url=>url.includes('login-mode')?Promise.resolve({ok:true,json:async()=>({phone:false})}):new Promise(resolve=>{resolveRequest=resolve})};
 vm.createContext(context);vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1],context);
-const fixture={users:2,conversations:4,transfers:6,totalAmounts:120,averageAmounts:40,averageRepeat:1,updatedAt:'2026-10-14T12:00:00Z',userList:[{name:'Test user',mobile:'050 XXXX 0000',operations:4,repeats:2,conversations:3}]};
+const fixture={users:2,conversations:4,transfers:6,totalAmounts:120,averageAmounts:40,averageOperations:1,updatedAt:'2026-10-14T12:00:00Z',userList:[{name:'Test user',mobile:'050 XXXX 0000',operations:4,averageOperations:1.33,conversations:3}]};
 (async()=>{
 let pending=context.refresh();
 assert(elements.refresh.disabled);assert.equal(elements.refresh.attributes['aria-busy'],'true');assert(!elements.refresh.parts['.spinner'].hidden);assert.equal(elements.refresh.parts['.button-label'].textContent,'جارٍ التحميل…');
