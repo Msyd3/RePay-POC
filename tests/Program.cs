@@ -237,6 +237,22 @@ reply = await Reply(arabicIdentity, "هل الشركة مرخصة؟");
 Check(reply.Contains("https://repay.sa") && arabicIdentity.Transfer?.Amount == 30, "Company question routes to website without mutating send");
 using(var cta = JsonDocument.Parse(handler.Bodies.First(body=>body.Contains("cta_url"))))
  Check(cta.RootElement.GetProperty("interactive").GetProperty("action").GetProperty("parameters").GetProperty("url").GetString()=="https://repay.sa", "CTA opens exact supplied website without embedding private details");
+// Security regressions: identifiers cannot authenticate, blank tokens fail closed.
+var verifyRequest = new Microsoft.AspNetCore.Http.DefaultHttpContext().Request;
+verifyRequest.QueryString = new Microsoft.AspNetCore.Http.QueryString("?hub.mode=subscribe&hub.verify_token=&hub.challenge=test");
+Check(WebhookEndpoints.VerifyAsync(verifyRequest, Options.Create(new RePayOptions())) is Microsoft.AspNetCore.Http.HttpResults.StatusCodeHttpResult { StatusCode: 403 }, "Blank webhook verify token is rejected");
+verifyRequest.QueryString = new Microsoft.AspNetCore.Http.QueryString("?hub.mode=subscribe&hub.verify_token=unit-secret&hub.challenge=test");
+Check(WebhookEndpoints.VerifyAsync(verifyRequest, Options.Create(new RePayOptions { WhatsAppVerifyToken = "unit-secret" })) is Microsoft.AspNetCore.Http.HttpResults.ContentHttpResult, "Matching configured verify token accepts handshake");
+var signatureMethod = typeof(WebhookEndpoints).GetMethod("IsValidSignature", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+var signatureBody = "{\"text\":\"مرحبا\"}";
+var signature = "sha256=" + Convert.ToHexStringLower(System.Security.Cryptography.HMACSHA256.HashData(System.Text.Encoding.UTF8.GetBytes("unit-secret"), System.Text.Encoding.UTF8.GetBytes(signatureBody)));
+bool Signed(string? header, string body) => (bool)signatureMethod.Invoke(null, new object?[] { header, body, "unit-secret" })!;
+Check(Signed(signature, signatureBody) && !Signed(signature, signatureBody + " ") && !Signed(signature[7..], signatureBody) && !Signed(null, signatureBody), "Webhook HMAC rejects tampering, missing prefix and missing signature");
+var authContext = new Microsoft.AspNetCore.Http.DefaultHttpContext();
+authContext.Request.Headers.Authorization = "Bearer 0500000000";
+Check(await AnalyticsEndpoints.GetAsync(authContext, Options.Create(new RePayOptions { AnalyticsPhone = "0500000000" }), store) is Microsoft.AspNetCore.Http.HttpResults.UnauthorizedHttpResult, "Phone alone cannot authenticate to dashboard");
+authContext.Request.Headers.Authorization = "Bearer unit-dashboard-secret";
+Check(await AnalyticsEndpoints.GetAsync(authContext, Options.Create(new RePayOptions { AnalyticsPassword = "unit-dashboard-secret" }), store) is not Microsoft.AspNetCore.Http.HttpResults.UnauthorizedHttpResult, "Configured dashboard password permits access");
 Console.WriteLine("All conversation and analytics checks passed");
 
 sealed class TestProvider : IAgentProvider

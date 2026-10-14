@@ -21,3 +21,4 @@ public sealed class RePayOptions
     public string GeminiModel { get; init; } = "gemini-2.5-flash";
     public string BrowserAgentBaseUrl { get; init; } = "";
 }
+

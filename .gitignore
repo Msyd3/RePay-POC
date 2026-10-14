@@ -7,3 +7,12 @@ App_Data/
 appsettings.Development.json
 *.user
 *.suo
+
+
+*.db
+*.db-shm
+*.db-wal
+*.pem
+*.key
+credentials*.json
+service-account*.json

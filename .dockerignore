@@ -6,3 +6,12 @@ App_Data/
 .env.*
 !.env.example
 work/
+
+
+**/bin/
+**/obj/
+*.db*
+*.pem
+*.key
+credentials*.json
+service-account*.json

@@ -12,7 +12,7 @@ public static class WebhookEndpoints
         var mode = request.Query["hub.mode"].ToString();
         var token = request.Query["hub.verify_token"].ToString();
         var challenge = request.Query["hub.challenge"].ToString();
-        return mode == "subscribe" && FixedTimeEquals(token, options.Value.WhatsAppVerifyToken)
+        return !string.IsNullOrWhiteSpace(options.Value.WhatsAppVerifyToken) && mode == "subscribe" && FixedTimeEquals(token, options.Value.WhatsAppVerifyToken)
             ? Results.Text(challenge, "text/plain") : Results.StatusCode(StatusCodes.Status403Forbidden);
     }
 
@@ -40,7 +40,8 @@ public static class WebhookEndpoints
     private static bool IsValidSignature(string? header, string body, string secret)
     {
         if (string.IsNullOrWhiteSpace(secret) || string.IsNullOrWhiteSpace(header)) return false;
-        var supplied = header.Replace("sha256=", "", StringComparison.OrdinalIgnoreCase);
+        if (!header.StartsWith("sha256=", StringComparison.Ordinal) || header.Length != 71) return false;
+        var supplied = header[7..];
         var actual = Convert.ToHexStringLower(HMACSHA256.HashData(Encoding.UTF8.GetBytes(secret), Encoding.UTF8.GetBytes(body)));
         return FixedTimeEquals(supplied, actual);
     }

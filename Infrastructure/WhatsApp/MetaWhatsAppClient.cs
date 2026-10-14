@@ -17,11 +17,11 @@ public sealed class MetaWhatsAppClient(HttpClient http, IOptions<RePayOptions> o
     }
     public async Task SendTextAsync(string to, string text, CancellationToken ct)
     {
-        var request = new HttpRequestMessage(HttpMethod.Post,
+        using var request = new HttpRequestMessage(HttpMethod.Post,
             $"https://graph.facebook.com/{_options.MetaGraphApiVersion}/{_options.MetaPhoneNumberId}/messages");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.MetaAccessToken);
         request.Content = JsonContent.Create(new { messaging_product = "whatsapp", to, type = "text", text = new { body = text } });
-        var response = await http.SendAsync(request, ct);
+        using var response = await http.SendAsync(request, ct);
         response.EnsureSuccessStatusCode();
     }
 }

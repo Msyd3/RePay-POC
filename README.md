@@ -1,41 +1,43 @@
-# RePay WhatsApp transfer POC
+# RePay WhatsApp POC
 
-ASP.NET Core (.NET 10) chatbot using WhatsApp Cloud API, Groq/Gemini, PostgreSQL (Neon) or SQLite, and Render Docker hosting.
+An ASP.NET Core (.NET 10) WhatsApp assistant for collecting send details in Arabic and English. **It does not execute financial transactions.** The confirmation button currently opens https://repay.sa without personal details in the URL.
 
-## Conversation
+## Start here
 
-- Arabic input gets Arabic replies; English input gets English replies. Numeric replies and contact cards retain the conversation language.
-- Transfers only: payment, shopping and product search are removed.
-- Start with `حول لمحمد ٢٠ ريال`, `send Mohammed 20 SAR`, a Saudi mobile number, or a shared WhatsApp contact. Shared contact followed by `حوله ٢٠` continues the same draft.
-- Collect Saudi mobile (10 local digits starting 05), amount in SAR (minimum 1), optional recipient name/note and sender first/last name. A valid mobile skips the recipient-name question. Common Arabic and English number words are accepted, including compound amounts. Incomplete local mobiles report missing digits. International +966 equivalents remain supported for contact cards. Ask only missing fields. Never read an address book automatically.
-- Sender name can be edited in Arabic or English while keeping the transfer draft. Changing recipient name clears the previous recipient phone. Every edit invalidates the prior review button.
-- A personalized welcome asks unknown customers for their full name before showing quick-transfer instructions. Recipient names resolve only from up to 20 contacts explicitly shared in this customer’s conversation; ambiguous matches ask for the mobile number. The WhatsApp API does not expose the customer’s address book.
-- Review uses a native WhatsApp reply button, not a displayed URL. Button IDs identify a particular draft revision and expire after three minutes. Tapping it currently explains that the confirmation page will be implemented later. No Apple Pay, financial execution, recipient SMS, OTP, bank linkage or withdrawal is implemented.
-- Webhooks reject old timestamps and deduplicate message IDs. Generated text/button state is persisted before sending so retries reuse the same response. Per-user locks serialize events on this single-instance POC.
-- Phone numbers use English digits with left-to-right isolation in the transfer summary and are redacted from history and withheld from model context. Recipient phone is retained only in the persisted draft for future review integration.
+- [Architecture and file map](docs/architecture.md)
+- [Configuration and operations](docs/operations.md)
+- [Google Cloud Run migration](docs/cloud-run.md)
+- [Security boundaries](SECURITY.md)
+- [Data handling](PRIVACY.md)
 
-## Configuration
+## Local development
 
-Use the existing `RePay` configuration/environment variables in `Services/RePayOptions.cs`. Do not commit credentials. Render's free instance can sleep when idle. PostgreSQL is recommended for persistence across redeploys; local SQLite requires persistent storage.
+Install .NET 10 SDK. Configure secrets through environment variables or .NET user secrets; `.env.example` is a reference and is not loaded automatically. Do not put real secrets in appsettings.json.
 
-## Checks
+```sh
+dotnet restore
+dotnet run --project RePay.WhatsAppPoc.csproj
+```
 
-`dotnet run --project tests/ConversationChecks.csproj`
+SQLite is a local development fallback. Use durable PostgreSQL for hosted deployments.
 
-Checks cover Arabic/English transfers, shared contacts, digit normalization, sender name collection and edits, recipient phone isolation, optional notes, cancelled requests, stale review buttons, review expiry, actual Meta button payloads, stale/duplicate webhooks, send retries, and persistence. Semantic intent tests mock the model; live natural-language behavior still depends on the configured provider.
+```sh
+dotnet run --project tests/ConversationChecks.csproj
+node tests/dashboard-checks.cjs
+```
 
-## Dashboard metrics
+The checks use fake AI/HTTP providers and temporary SQLite databases, not live messages or production credentials.
 
-The dashboard shows users, conversations, started send requests, total/average recorded summary amounts, and average repeat sends per user. A repeat is a send request beyond the user's first send request. User rows contain masked mobiles, started requests, repeat sends and conversations.
+## Behavior
 
-Amount aggregates update the contribution of the same draft when its amount is edited; displaying its summary again does not double count. New drafts contribute separately. Aggregates persist after a draft is cleared. Available pre-upgrade summaries are recovered once; missing historical amounts are not inferred from request counts. These are POC request/summary amounts, not executed financial transactions.
+Arabic messages receive Arabic replies, English messages receive English replies; numeric replies and shared contacts preserve language. Send requests accept a name, mobile or shared contact and numeric/written amounts. Sender first/last name is required; recipient name is optional with a valid Saudi mobile. Minimum amount is SAR 1. The assistant asks only missing details and supports edits and cancellations. New sends cannot reuse the previous amount.
 
-UI logic checks: `node tests/dashboard-checks.cjs` (mock DOM/API; no production credentials). Covers loading indicators, successful metrics/table rendering, refresh errors keeping existing data, unauthorized login state, empty rows and logout.
+Contacts resolve only from cards explicitly shared in this chat, not the phone address book. A completed summary is counted as a POC operation, **not an executed transfer**. Edits update the same summary amount without counting another operation. Dashboard operations are completed summaries; average operations per user is total summaries/users, and row average is summaries/conversations.
 
-## Website confirmation button
+Company questions link to the official website. WhatsApp determines whether the URL button opens an internal or external browser; the API cannot force it. Native Flows, Apple Pay, recipient SMS, OTP, bank linking and withdrawals are not implemented.
 
-The operation summary now uses a WhatsApp `cta_url` button labelled تأكيد العملية / Confirm operation pointing to https://repay.sa. This is the supplied public website, not a transaction-confirmation endpoint. No sender/recipient details are appended to the URL, and tapping it does not complete a financial transaction or emit a reply-button confirmation webhook. WhatsApp/client settings determine whether a URL opens in an in-app browser; the API does not expose a forced browsing mode. Native WhatsApp Flows are still not configured. Old reply-button callbacks remain recognized for compatibility.
+## Deployment incident, 14 October 2026
 
-Company questions are directed to the official website. Names and numeric/currency replies retain the conversation language rather than switching based on Latin names or SAR labels.
+Observed Render deploy requests returned `Service Unavailable`; `/health` stayed on Render's loading screen. Render's status page reported a builds/deploys incident. A restart was recorded but did not establish successful application startup. This is evidence of a hosting blocker, not proof that the code is fault-free.
 
-Switching the sender to the business mobile requires its verified Meta Phone Number ID and account configuration; putting the mobile digits into MetaPhoneNumberId is invalid. The existing sender configuration stays active until the business number is verified and available in WhatsApp Manager.
+The business sender has been registered and its webhook subscription configured in Meta. These are runtime account settings, not credentials or data to commit here. Verify actual delivery and automatic replies after the new host is running.
