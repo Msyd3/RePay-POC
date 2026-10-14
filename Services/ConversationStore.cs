@@ -23,6 +23,8 @@ public sealed class ConversationState
     public long ConversationCount { get; set; }
     public long SearchExamples { get; set; }
     public long TransferExamples { get; set; }
+    public decimal TransferAmountTotal { get; set; }
+    public long RecordedTransferAmounts { get; set; }
     public long PaymentExamples { get; set; }
     public DateTimeOffset? LastMessageAt { get; set; }
     public string? PendingMessageId { get; set; }
@@ -32,6 +34,14 @@ public sealed class ConversationState
     public bool Welcomed { get; set; }
     public List<ChatTurn> Turns { get; set; } = [];
     public List<string> ProcessedMessages { get; set; } = [];
+    public void RecordTransferAmount()
+    {
+        if (Transfer is not { RequestedField: "review", Amount: { } amount } draft || !SendAmount.Valid(amount)) return;
+        if (draft.RecordedAmount is { } previous) TransferAmountTotal += amount - previous;
+        else { TransferAmountTotal += amount; RecordedTransferAmounts++; }
+        draft.RecordedAmount = amount;
+    }
+
 }
 
 public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvironment environment)
@@ -81,6 +91,7 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
             Add(cmd, "phone", phone);
             var raw = await cmd.ExecuteScalarAsync(ct) as string;
             var state = raw is null ? new ConversationState() : JsonSerializer.Deserialize<ConversationState>(raw) ?? throw new InvalidDataException("Invalid conversation state");
+            state.RecordTransferAmount(); // Preserve an available legacy summary before idle expiry/new requests.
             return new Session(this, phone, state, gate);
         }
         catch { gate.Release(); throw; }
@@ -105,20 +116,26 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
         cmd.CommandText = "SELECT phone,state FROM repay_conversations";
         await using var rows = await cmd.ExecuteReaderAsync(ct);
         var userList = new List<object>();
-        long users = 0, conversations = 0, messages = 0, searches = 0, transfers = 0, payments = 0;
+        long users = 0, conversations = 0, transfers = 0, repeats = 0, recordedAmounts = 0;
+        decimal totalAmounts = 0;
         while (await rows.ReadAsync(ct))
         {
             var s = JsonSerializer.Deserialize<ConversationState>(rows.GetString(1))!;
+            s.RecordTransferAmount();
             var phone = rows.GetString(0);
-            userList.Add(new { name = s.Name ?? "لم يحدد الاسم", mobile = ConversationLifecycle.MaskPhone(phone), messages = s.MessageCount });
+            var repeat = Math.Max(0, s.ConversationCount - 1);
+            userList.Add(new { name = s.Name ?? "لم يحدد الاسم", mobile = ConversationLifecycle.MaskPhone(phone), operations = s.TransferExamples, repeats = repeat, conversations = s.ConversationCount });
             users++;
             conversations += s.ConversationCount;
-            messages += s.MessageCount;
-            searches += s.SearchExamples;
             transfers += s.TransferExamples;
-            payments += s.PaymentExamples;
+            repeats += repeat;
+            recordedAmounts += s.RecordedTransferAmounts;
+            totalAmounts += s.TransferAmountTotal;
         }
-        return new { userList, users, conversations, messages, searches, transfers, payments, actualTransactions = 0, updatedAt = DateTimeOffset.UtcNow };
+        return new { userList, users, conversations, transfers, totalAmounts,
+            averageAmounts = recordedAmounts == 0 ? 0 : totalAmounts / recordedAmounts,
+            averageRepeat = users == 0 ? 0 : (decimal)repeats / users,
+            recordedAmounts, updatedAt = DateTimeOffset.UtcNow };
     }
 
     private static void Add(DbCommand cmd, string name, string value)

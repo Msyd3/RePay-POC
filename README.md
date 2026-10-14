@@ -23,3 +23,11 @@ Use the existing `RePay` configuration/environment variables in `Services/RePayO
 `dotnet run --project tests/ConversationChecks.csproj`
 
 Checks cover Arabic/English transfers, shared contacts, digit normalization, sender name collection and edits, recipient phone isolation, optional notes, cancelled requests, stale review buttons, review expiry, actual Meta button payloads, stale/duplicate webhooks, send retries, and persistence. Semantic intent tests mock the model; live natural-language behavior still depends on the configured provider.
+
+## Dashboard metrics
+
+The dashboard shows users, conversations, started send requests, total/average recorded summary amounts, and average return sessions per user. A return is a conversation beyond the user's first conversation. User rows contain masked mobiles, started requests, returns and conversations.
+
+Amount aggregates update the contribution of the same draft when its amount is edited; displaying its summary again does not double count. New drafts contribute separately. Aggregates persist after a draft is cleared. Available pre-upgrade summaries are recovered once; missing historical amounts are not inferred from request counts. These are POC request/summary amounts, not executed financial transactions.
+
+UI logic checks: `node tests/dashboard-checks.cjs` (mock DOM/API; no production credentials). Covers loading indicators, successful metrics/table rendering, refresh errors keeping existing data, unauthorized login state, empty rows and logout.
