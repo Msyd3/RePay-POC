@@ -9,6 +9,7 @@ public sealed class TransferDraft
     public string? RecipientPhone { get; set; }
     public decimal? Amount { get; set; }
     public string? Note { get; set; }
+    public decimal? RecordedAmount { get; set; }
     public string? ReviewId { get; set; }
     public DateTimeOffset? ReviewExpiresAt { get; set; }
     public string? RequestedField { get; set; }
@@ -224,6 +225,7 @@ public static class TransferConversation
         if (d.Amount is not null && !SendAmount.Valid(d.Amount.Value)) { d.Amount = null; Invalidate(d); }
         if (d.Amount is null) { d.RequestedField = "amount"; return Say(s, "كم تبي تحوّل بالريال السعودي؟", "How much would you like to send in SAR?"); }
         d.RequestedField = "review";
+        s.RecordTransferAmount();
         d.ReviewId = Guid.NewGuid().ToString("N");
         d.ReviewExpiresAt = DateTimeOffset.UtcNow.AddMinutes(3);
         s.PendingReviewButton = d.ReviewId;

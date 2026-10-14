@@ -189,7 +189,42 @@ Check(reply.Contains("10") && missingPhone.Transfer is null, "Too-long phone rej
 reply = await Reply(missingPhone, "0512345678");
 await Reply(missingPhone, "واحد");
 Check(missingPhone.Transfer?.Amount == 1 && missingPhone.PendingReviewButton is not null, "Bare written amount accepted when requested");
-Console.WriteLine("All transfer checks passed");
+var statsDir = Path.Combine(Path.GetTempPath(), "repay-stats-" + Guid.NewGuid());
+var statsOptions = Options.Create(new RePayOptions { DataDirectory = statsDir });
+var statsStore = new ConversationStore(statsOptions, new TestEnvironment { ContentRootPath = statsDir });
+await statsStore.InitializeAsync();
+await using (var session = await statsStore.OpenSessionAsync("966500000010", default))
+{
+ var state = session.State; state.Name = "محمد السالم"; state.ConversationCount = 3;
+ await Reply(state, "send 0500000000 20 SAR");
+ await Reply(state, "continue");
+ Check(state.RecordedTransferAmounts == 1 && state.TransferAmountTotal == 20, "Repeated summary does not duplicate amount analytics");
+ await Reply(state, "change amount to 30 SAR");
+ Check(state.RecordedTransferAmounts == 1 && state.TransferAmountTotal == 30, "Editing amount replaces previous contribution");
+ await Reply(state, "send 0500000000 50 SAR");
+ Check(state.RecordedTransferAmounts == 2 && state.TransferAmountTotal == 80, "Fresh send adds distinct amount contribution");
+ await Reply(state, "cancel");
+ Check(state.TransferAmountTotal == 80, "Prepared amount history survives cancellation of active draft");
+ await session.SaveAsync(default);
+}
+await using (var session = await statsStore.OpenSessionAsync("966500000011", default))
+{
+ session.State.Name = "علي السالم"; session.State.ConversationCount = 1; session.State.TransferExamples = 4;
+ session.State.Transfer = new TransferDraft { RequestedField = "review", Amount = 40, RecipientPhone = "966500000000" };
+ await session.SaveAsync(default);
+}
+using (var stats = JsonDocument.Parse(JsonSerializer.Serialize(await statsStore.AnalyticsAsync(default))))
+{
+ var root = stats.RootElement;
+ Check(root.GetProperty("totalAmounts").GetDecimal() == 120 && root.GetProperty("averageAmounts").GetDecimal() == 40, "Analytics averages only recorded amounts, preserves available legacy summary");
+ Check(root.GetProperty("averageRepeat").GetDecimal() == 1 && root.GetProperty("conversations").GetInt64() == 4, "Repeat average counts return sessions beyond first per user");
+ Check(root.GetProperty("transfers").GetInt64() == 6 && root.GetProperty("recordedAmounts").GetInt64() == 3, "Historical operation counts do not invent unavailable amounts");
+ var row = root.GetProperty("userList")[0];
+ Check(row.TryGetProperty("operations", out _) && row.TryGetProperty("repeats", out _) && row.TryGetProperty("conversations", out _) && !row.GetProperty("mobile").GetString()!.Contains("500000010"), "Dashboard rows include requested counters and mask mobile");
+}
+await using (var session = await new ConversationStore(statsOptions, new TestEnvironment { ContentRootPath = statsDir }).OpenSessionAsync("966500000010", default))
+ Check(session.State.TransferAmountTotal == 80 && session.State.RecordedTransferAmounts == 2, "Aggregate amount history survives restart without active draft");
+Console.WriteLine("All conversation and analytics checks passed");
 
 sealed class TestProvider : IAgentProvider
 {
