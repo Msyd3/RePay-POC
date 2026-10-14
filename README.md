@@ -31,3 +31,11 @@ The dashboard shows users, conversations, started send requests, total/average r
 Amount aggregates update the contribution of the same draft when its amount is edited; displaying its summary again does not double count. New drafts contribute separately. Aggregates persist after a draft is cleared. Available pre-upgrade summaries are recovered once; missing historical amounts are not inferred from request counts. These are POC request/summary amounts, not executed financial transactions.
 
 UI logic checks: `node tests/dashboard-checks.cjs` (mock DOM/API; no production credentials). Covers loading indicators, successful metrics/table rendering, refresh errors keeping existing data, unauthorized login state, empty rows and logout.
+
+## Website confirmation button
+
+The operation summary now uses a WhatsApp `cta_url` button labelled تأكيد العملية / Confirm operation pointing to https://repay.sa. This is the supplied public website, not a transaction-confirmation endpoint. No sender/recipient details are appended to the URL, and tapping it does not complete a financial transaction or emit a reply-button confirmation webhook. WhatsApp/client settings determine whether a URL opens in an in-app browser; the API does not expose a forced browsing mode. Native WhatsApp Flows are still not configured. Old reply-button callbacks remain recognized for compatibility.
+
+Company questions are directed to the official website. Names and numeric/currency replies retain the conversation language rather than switching based on Latin names or SAR labels.
+
+Switching the sender to the business mobile requires its verified Meta Phone Number ID and account configuration; putting the mobile digits into MetaPhoneNumberId is invalid. The existing sender configuration stays active until the business number is verified and available in WhatsApp Manager.

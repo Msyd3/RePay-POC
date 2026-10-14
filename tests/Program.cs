@@ -38,7 +38,7 @@ var en = new ConversationState { Name = "John Smith" };
 reply = await Reply(en, "send 20 SAR to Mohammed");
 Check(en.Transfer?.RecipientName == "Mohammed" && en.Transfer.Amount == 20 && reply.Contains("mobile"), "English amount-first transfer");
 reply = await Reply(en, "0500000000");
-Check(en.Language == "en" && reply.Contains("Send summary") && !reply.Contains("المبلغ"), "Numeric continuation retains English");
+Check(en.Language == "en" && reply.Contains("Operation summary") && !reply.Contains("المبلغ"), "Numeric continuation retains English");
 reply = await Reply(en, "change my name to Jane Doe");
 Check(en.Name == "Jane Doe" && en.Transfer?.Amount == 20, "English account rename preserves transfer");
 reply = await Reply(en, "ابي اشتري جوال");
@@ -74,7 +74,7 @@ await app.HandleAsync(Payload("c", new { body = "John Smith" }), default);
 using (var json = JsonDocument.Parse(handler.Bodies.Last()))
 {
  var root = json.RootElement;
- Check(root.GetProperty("type").GetString() == "interactive" && root.GetProperty("interactive").GetProperty("action").GetProperty("buttons")[0].GetProperty("reply").GetProperty("title").GetString() == "Review send", "Outbound Meta review is native button, no URL");
+ Check(root.GetProperty("type").GetString() == "interactive" && root.GetProperty("interactive").GetProperty("action").GetProperty("parameters").GetProperty("display_text").GetString() == "Confirm operation", "Outbound Meta CTA has confirmation label");
 }
 var count = handler.Bodies.Count;
 await app.HandleAsync(Payload("c", new { body = "John Smith" }), default);
@@ -123,13 +123,13 @@ Check(reply.Contains("يا هلا محمد السالم") && reply.Contains("\n\
 reply = await Reply(welcome, "hello");
 Check(reply.Contains("Hi محمد السالم") && reply.Contains("To send money quickly"), "Known customer greeted in current message language");
 reply = await Reply(welcome, "وش هي ري باي؟");
-Check(reply == "ري باي هي محفظة رقمية تجعل عمليات التحويل سهلة زي إرسال رسالة" && welcome.Language == "ar", "Arabic RePay definition is exact requested copy");
+Check(reply.Contains("الموقع الرسمي: https://repay.sa") && welcome.Language == "ar", "Arabic RePay definition is exact requested copy");
 reply = await Reply(welcome, "what is RePay?");
-Check(reply.StartsWith("RePay is a digital wallet") && welcome.Language == "en", "English RePay question gets English definition");
+Check(reply.StartsWith("For information about RePay") && welcome.Language == "en", "English RePay question gets English definition");
 await Reply(welcome, "contact:محمد العلي ٠٥١٢٣٤٥٦٧٨");
 await Reply(welcome, "الغاء");
 reply = await Reply(welcome, "حول لمحمد ٢٠ ريال");
-Check(welcome.Transfer?.RecipientPhone == "966512345678" && welcome.Transfer.Amount == 20 && reply.Contains("ملخص التحويل"), "Name resolves a previously shared contact and Arabic amount");
+Check(welcome.Transfer?.RecipientPhone == "966512345678" && welcome.Transfer.Amount == 20 && reply.Contains("ملخص العملية"), "Name resolves a previously shared contact and Arabic amount");
 Check(reply.Contains("\u20660512345678\u2069"), "Full mobile is isolated left to right with English digits");
 await Reply(welcome, "الغاء");
 await Reply(welcome, "محمد");
@@ -224,6 +224,19 @@ using (var stats = JsonDocument.Parse(JsonSerializer.Serialize(await statsStore.
 }
 await using (var session = await new ConversationStore(statsOptions, new TestEnvironment { ContentRootPath = statsDir }).OpenSessionAsync("966500000010", default))
  Check(session.State.TransferAmountTotal == 80 && session.State.RecordedTransferAmounts == 2, "Aggregate amount history survives restart without active draft");
+var arabicIdentity = new ConversationState { Language = "ar", Name = "محمد السيد" };
+await Reply(arabicIdentity, "حول عشرين ريال");
+reply = await Reply(arabicIdentity, "Mohammed AlSayyed");
+Check(arabicIdentity.Language == "ar" && reply.Contains("رقم جوال"), "English recipient name preserves Arabic conversation");
+reply = await Reply(arabicIdentity, "0541009449");
+Check(reply.Contains("ملخص العملية") && reply.EndsWith("راجع البيانات أو اطلب تعديلها") && !reply.Contains("Operation summary"), "Exact Arabic summary copy and footer");
+await Reply(arabicIdentity, "عدل المبلغ");
+reply = await Reply(arabicIdentity, "30 SAR");
+Check(arabicIdentity.Language == "ar" && reply.Contains("ملخص العملية"), "Currency abbreviation cannot switch numeric reply language");
+reply = await Reply(arabicIdentity, "هل الشركة مرخصة؟");
+Check(reply.Contains("https://repay.sa") && arabicIdentity.Transfer?.Amount == 30, "Company question routes to website without mutating send");
+using(var cta = JsonDocument.Parse(handler.Bodies.First(body=>body.Contains("cta_url"))))
+ Check(cta.RootElement.GetProperty("interactive").GetProperty("action").GetProperty("parameters").GetProperty("url").GetString()=="https://repay.sa", "CTA opens exact supplied website without embedding private details");
 Console.WriteLine("All conversation and analytics checks passed");
 
 sealed class TestProvider : IAgentProvider

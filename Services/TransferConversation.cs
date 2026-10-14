@@ -28,13 +28,16 @@ public static class TransferConversation
     }
     public static async Task<string> ReplyAsync(ConversationState s, string input, AgentRouter agent, CancellationToken ct)
     {
-        DetectLanguage(s, input);
+        var identityReply = (s.AwaitingNameChange || s.Transfer?.RequestedField is "sender" or "recipientName") && ServiceConversation.TryGetName(input, out _);
+        var numericReply = Regex.IsMatch(ConversationLifecycle.EnglishDigits(input.Trim()), @"^\d+(?:[.٫]\d+)?\s*(?:SAR|ريال(?: سعودي)?|riyals?)?$", RegexOptions.IgnoreCase);
+        if (!identityReply && !numericReply) DetectLanguage(s, input);
         s.PendingReviewButton = null;
         s.Demo = null; // Retire purchase and legacy demo state on upgrade.
         var text = ConversationLifecycle.EnglishDigits(NameConversation.Normalize(input));
         var draft = s.Transfer;
-        if (Regex.IsMatch(text, @"^(?:(?:وش|ايش|ما)\s+(?:هي\s+|هو\s+)?(?:ري\s*باي|ريبای|ريبـاي|repay)|what(?:'s| is)\s+repay)\s*[?؟]?$", RegexOptions.IgnoreCase))
-            return Say(s, "ري باي هي محفظة رقمية تجعل عمليات التحويل سهلة زي إرسال رسالة", "RePay is a digital wallet that makes sending money as easy as sending a message");
+        if (Regex.IsMatch(text, @"(?:ري\s*باي|repay|الشركة|شركتكم|company|your business|الترخيص|تراخيص|license|مقر|رسوم|fees)", RegexOptions.IgnoreCase)
+            && !NameConversation.IsRequest(input))
+            return Say(s, "لأي معلومات عن ري باي، تفضل الموقع الرسمي: https://repay.sa", "For information about RePay, please visit our official website: https://repay.sa");
         if (ServiceConversation.IsCasualMessage(input) && Regex.IsMatch(text, @"^(?:يا\s+)?(?:هلا|اهلا|اهلين|مرحبا|السلام عليكم|hello|hi|hey)\b", RegexOptions.IgnoreCase))
             return Welcome(s);
         if (input.StartsWith("review:"))
@@ -110,7 +113,7 @@ public static class TransferConversation
             if (start) s.AwaitingNameChange = false;
             if (Regex.IsMatch(text, @"^(?:كمل|نكمل|continue|resume)$", RegexOptions.IgnoreCase)) return Next(s);
             if (Regex.IsMatch(text, @"^(?:تاكيد|اكد|نعم|تمام|confirm|yes|ok)$", RegexOptions.IgnoreCase))
-                return draft.ReviewId is null ? Next(s) : Say(s, "استخدم زر «مراجعة التحويل». ما تم تحويل أي مبلغ", "Use the 'Review send' button. No money has been sent");
+                return draft.ReviewId is null ? Next(s) : Say(s, "استخدم زر «تأكيد العملية»", "Use the 'Confirm operation' button");
             var changed = Extract(draft, text, contact);
             if (!changed && draft.RequestedField == "sender") return Say(s, "اكتب اسمك الأول واسم العائلة عشان نكمل", "Please enter your first and last name to continue");
             if (!changed && draft.RequestedField == "recipientName" && ServiceConversation.TryGetName(input, out var recipient))
@@ -231,7 +234,7 @@ public static class TransferConversation
         s.PendingReviewButton = d.ReviewId;
         var amount = d.Amount.Value.ToString("0.00", CultureInfo.InvariantCulture);
         return Say(s,
-            $"*ملخص التحويل*\n*المرسل:* {s.Name}\n*المستفيد:* {d.RecipientName ?? "رقم الجوال"}\n*الجوال:* {DisplayPhone(d.RecipientPhone)}\n*المبلغ:* {amount} ريال سعودي" + (d.Note is null ? "" : $"\n*الملاحظة:* {d.Note}") + "\nراجع البيانات أو اطلب تعديلها. ما تم تحويل أي مبلغ",
-            $"*Send summary*\n*Sender:* {s.Name}\n*Recipient:* {d.RecipientName ?? "Mobile number"}\n*Mobile:* {DisplayPhone(d.RecipientPhone)}\n*Amount:* {amount} SAR" + (d.Note is null ? "" : $"\n*Note:* {d.Note}") + "\nReview the details or request an edit. No money has been sent");
+            $"*ملخص العملية*\n*المرسل:* {s.Name}\n*المستفيد:* {d.RecipientName ?? "رقم الجوال"}\n*الجوال:* {DisplayPhone(d.RecipientPhone)}\n*المبلغ:* {amount} ريال سعودي" + (d.Note is null ? "" : $"\n*الملاحظة:* {d.Note}") + "\nراجع البيانات أو اطلب تعديلها",
+            $"*Operation summary*\n*Sender:* {s.Name}\n*Recipient:* {d.RecipientName ?? "Mobile number"}\n*Mobile:* {DisplayPhone(d.RecipientPhone)}\n*Amount:* {amount} SAR" + (d.Note is null ? "" : $"\n*Note:* {d.Note}") + "\nReview the details or request an edit");
     }
 }
