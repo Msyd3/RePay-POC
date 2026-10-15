@@ -14,6 +14,8 @@ public sealed class MetaWhatsAppClient(HttpClient http, IOptions<RePayOptions> o
         using var request = new HttpRequestMessage(HttpMethod.Post, $"https://graph.facebook.com/{_options.MetaGraphApiVersion}/{_options.MetaPhoneNumberId}/messages");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.MetaAccessToken);
         request.Content = JsonContent.Create(new { messaging_product = "whatsapp", to, type = "interactive", interactive = new { type = "cta_url", body = new { text }, action = new { name = "cta_url", parameters = new { url = "https://repay.sa", display_text = language == "en" ? "Confirm operation" : "تأكيد العملية" } } } });
+        // Materialize JSON so HTTP/1.1 uses Content-Length rather than chunked framing.
+        await request.Content.LoadIntoBufferAsync(ct);
         using var response = await http.SendAsync(request, ct);
         await EnsureMetaSuccessAsync(response, ct);
     }
@@ -23,6 +25,8 @@ public sealed class MetaWhatsAppClient(HttpClient http, IOptions<RePayOptions> o
             $"https://graph.facebook.com/{_options.MetaGraphApiVersion}/{_options.MetaPhoneNumberId}/messages");
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.MetaAccessToken);
         request.Content = JsonContent.Create(new { messaging_product = "whatsapp", to, type = "text", text = new { body = text } });
+        // Materialize JSON so HTTP/1.1 uses Content-Length rather than chunked framing.
+        await request.Content.LoadIntoBufferAsync(ct);
         using var response = await http.SendAsync(request, ct);
         await EnsureMetaSuccessAsync(response, ct);
     }

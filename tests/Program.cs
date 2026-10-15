@@ -267,7 +267,12 @@ sealed class RecordingHandler : HttpMessageHandler
 {
  public List<string> Bodies = []; public bool FailNext;
  protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
- { Bodies.Add(await request.Content!.ReadAsStringAsync(ct)); if (FailNext) { FailNext = false; return new(HttpStatusCode.ServiceUnavailable); } return new(HttpStatusCode.OK) { Content = new StringContent("{}") }; }
+ {
+   var declaredLength = request.Content!.Headers.ContentLength;
+   var body = await request.Content.ReadAsStringAsync(ct);
+   if (declaredLength is null || declaredLength != System.Text.Encoding.UTF8.GetByteCount(body))
+       throw new Exception("Meta payload must have a known UTF-8 Content-Length before sending");
+   Bodies.Add(body); if (FailNext) { FailNext = false; return new(HttpStatusCode.ServiceUnavailable); } return new(HttpStatusCode.OK) { Content = new StringContent("{}") }; }
 }
 sealed class TestEnvironment : IHostEnvironment
 {
