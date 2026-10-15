@@ -78,13 +78,19 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
 
     private static string RedactPhone(string text) => Regex.Replace(text, @"[+＋]?[0-9٠-٩][0-9٠-٩ ()-]{7,}[0-9٠-٩]", "[رقم جوال]");
 
-    private static IEnumerable<(string Id, string Phone, string Text, DateTimeOffset SentAt)> ExtractTextMessages(JsonElement root)
+    private IEnumerable<(string Id, string Phone, string Text, DateTimeOffset SentAt)> ExtractTextMessages(JsonElement root)
     {
         if (!root.TryGetProperty("entry", out var entries)) yield break;
         foreach (var entry in entries.EnumerateArray())
         foreach (var change in entry.GetProperty("changes").EnumerateArray())
         {
             var value = change.GetProperty("value");
+            // One application may subscribe to several numbers. Never cross-reply
+            // between the test sender and the configured business sender.
+            if (!value.TryGetProperty("metadata", out var metadata)
+                || !metadata.TryGetProperty("phone_number_id", out var businessPhone)
+                || string.IsNullOrWhiteSpace(whatsapp.PhoneNumberId)
+                || businessPhone.GetString() != whatsapp.PhoneNumberId) continue;
             if (!value.TryGetProperty("messages", out var messages)) continue;
             foreach (var message in messages.EnumerateArray())
             {
