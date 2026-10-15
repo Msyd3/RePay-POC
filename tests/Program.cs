@@ -67,7 +67,7 @@ var env = new TestEnvironment { ContentRootPath = dir };
 var handler = new RecordingHandler();
 var store = new ConversationStore(options, env); await store.InitializeAsync();
 var app = new WhatsAppOrchestrator(new MetaWhatsAppClient(new HttpClient(handler), options), router, store);
-string Payload(string id, object body, DateTimeOffset? sentAt = null) => JsonSerializer.Serialize(new { entry = new[] { new { changes = new[] { new { value = new { messages = new[] { new { id, from = "966500000001", timestamp = (sentAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds().ToString(), text = body } } } } } } } });
+string Payload(string id, object body, DateTimeOffset? sentAt = null) => JsonSerializer.Serialize(new { entry = new[] { new { changes = new[] { new { value = new { metadata = new { phone_number_id = "test" }, messages = new[] { new { id, from = "966500000001", timestamp = (sentAt ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds().ToString(), text = body } } } } } } } });
 await app.HandleAsync(Payload("a", new { body = "send Mohammed 20 SAR" }), default);
 await app.HandleAsync(Payload("b", new { body = "0500000000" }), default);
 await app.HandleAsync(Payload("c", new { body = "John Smith" }), default);
@@ -77,12 +77,14 @@ using (var json = JsonDocument.Parse(handler.Bodies.Last()))
  Check(root.GetProperty("type").GetString() == "interactive" && root.GetProperty("interactive").GetProperty("action").GetProperty("parameters").GetProperty("display_text").GetString() == "Confirm operation", "Outbound Meta CTA has confirmation label");
 }
 var count = handler.Bodies.Count;
+await app.HandleAsync(Payload("wrong-sender", new { body = "hello" }).Replace("\"phone_number_id\":\"test\"", "\"phone_number_id\":\"other-number\""), default);
+Check(handler.Bodies.Count == count, "Other business/test number cannot trigger replies from configured sender");
 await app.HandleAsync(Payload("c", new { body = "John Smith" }), default);
 await app.HandleAsync(Payload("stale", new { body = "hello" }, DateTimeOffset.UtcNow.AddMinutes(-10)), default);
 Check(handler.Bodies.Count == count, "Duplicate and stale webhooks never reply");
 await using (var saved = await new ConversationStore(options, env).OpenSessionAsync("966500000001", default))
  Check(saved.State.Name == "John Smith" && saved.State.Transfer?.Amount == 20 && saved.State.Language == "en", "Name, transfer, language survive restart");
-var cardPayload = JsonSerializer.Serialize(new { entry = new[] { new { changes = new[] { new { value = new { messages = new[] { new { id = "card", from = "966500000002", timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), contacts = new[] { new { name = new { formatted_name = "خالد" }, phones = new[] { new { phone = "0500000000" } } } } } } } } } } } });
+var cardPayload = JsonSerializer.Serialize(new { entry = new[] { new { changes = new[] { new { value = new { metadata = new { phone_number_id = "test" }, messages = new[] { new { id = "card", from = "966500000002", timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(), contacts = new[] { new { name = new { formatted_name = "خالد" }, phones = new[] { new { phone = "0500000000" } } } } } } } } } } } });
 await app.HandleAsync(cardPayload, default);
 await using (var saved = await store.OpenSessionAsync("966500000002", default)) Check(saved.State.Transfer?.RecipientName == "خالد" && saved.State.Transfer.RecipientPhone == "966500000000", "Actual contact webhook creates recipient draft");
 var failing = new ConversationState { Name = "John Smith" };

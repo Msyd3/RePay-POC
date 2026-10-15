@@ -49,5 +49,7 @@ app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 app.MapGet("/webhooks/whatsapp", WebhookEndpoints.VerifyAsync);
 app.MapPost("/webhooks/whatsapp", WebhookEndpoints.ReceiveAsync);
 await app.Services.GetRequiredService<ConversationStore>().InitializeAsync();
+app.Logger.LogInformation("WhatsApp sender PhoneNumberId: {PhoneNumberId}",
+    app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<RePayOptions>>().Value.MetaPhoneNumberId);
 app.Run();
 

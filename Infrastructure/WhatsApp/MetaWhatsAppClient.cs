@@ -7,6 +7,7 @@ namespace RePay.WhatsAppPoc.Services;
 public sealed class MetaWhatsAppClient(HttpClient http, IOptions<RePayOptions> options)
 {
     private readonly RePayOptions _options = options.Value;
+    public string PhoneNumberId => _options.MetaPhoneNumberId;
     public async Task SendReviewAsync(string to, string text, string reviewId, string language, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, $"https://graph.facebook.com/{_options.MetaGraphApiVersion}/{_options.MetaPhoneNumberId}/messages");
