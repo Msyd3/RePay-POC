@@ -33,19 +33,29 @@ public sealed class MetaWhatsAppClient(HttpClient http, IOptions<RePayOptions> o
     private static async Task EnsureMetaSuccessAsync(HttpResponseMessage response, CancellationToken ct)
     {
         if (response.IsSuccessStatusCode) return;
-        // Numeric provider diagnostics only: never log raw responses, tokens or message bodies.
-        string code = "unknown", subcode = "unknown";
+        // Allowlisted diagnostics only: never log provider messages, raw bodies or credentials.
+        string code = "unknown", subcode = "unknown", trace = "unknown", transient = "unknown";
         try
         {
             using var error = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
-            if (error.RootElement.TryGetProperty("error", out var details))
+            if (error.RootElement.ValueKind == JsonValueKind.Object
+                && error.RootElement.TryGetProperty("error", out var details)
+                && details.ValueKind == JsonValueKind.Object)
             {
-                if (details.TryGetProperty("code", out var c) && c.TryGetInt64(out var n)) code = n.ToString();
-                if (details.TryGetProperty("error_subcode", out var sc) && sc.TryGetInt64(out var sn)) subcode = sn.ToString();
+                if (details.TryGetProperty("code", out var c) && c.ValueKind == JsonValueKind.Number && c.TryGetInt64(out var n)) code = n.ToString();
+                if (details.TryGetProperty("error_subcode", out var sc) && sc.ValueKind == JsonValueKind.Number && sc.TryGetInt64(out var sn)) subcode = sn.ToString();
+                if (details.TryGetProperty("is_transient", out var t) && t.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                    transient = t.GetBoolean() ? "true" : "false";
+                if (details.TryGetProperty("fbtrace_id", out var id) && id.ValueKind == JsonValueKind.String)
+                {
+                    var candidate = id.GetString();
+                    if (candidate is { Length: > 0 and <= 128 } && candidate.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_'))
+                        trace = candidate;
+                }
             }
         }
         catch (JsonException) { }
-        throw new HttpRequestException($"Meta send failed: HTTP {(int)response.StatusCode}, code {code}, subcode {subcode}", null, response.StatusCode);
+        throw new HttpRequestException($"Meta send failed: HTTP {(int)response.StatusCode}, code {code}, subcode {subcode}, transient {transient}, trace {trace}", null, response.StatusCode);
     }
 }
 
