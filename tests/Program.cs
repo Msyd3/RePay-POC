@@ -255,6 +255,26 @@ authContext.Request.Headers.Authorization = "Bearer 0500000000";
 Check(await AnalyticsEndpoints.GetAsync(authContext, Options.Create(new RePayOptions { AnalyticsPhone = "0500000000" }), store) is Microsoft.AspNetCore.Http.HttpResults.UnauthorizedHttpResult, "Phone alone cannot authenticate to dashboard");
 authContext.Request.Headers.Authorization = "Bearer unit-dashboard-secret";
 Check(await AnalyticsEndpoints.GetAsync(authContext, Options.Create(new RePayOptions { AnalyticsPassword = "unit-dashboard-secret" }), store) is not Microsoft.AspNetCore.Http.HttpResults.UnauthorizedHttpResult, "Configured dashboard password permits access");
+// Provider failures must retain safe support diagnostics without leaking arbitrary text.
+foreach (var sample in new[]
+{
+    ("{\"error\":{\"code\":1,\"is_transient\":true,\"fbtrace_id\":\"UnitTrace_123\",\"message\":\"secret-token customer-message\"}}", "trace UnitTrace_123", "transient true"),
+    ("{\"error\":{\"code\":\"bad\",\"error_subcode\":{},\"fbtrace_id\":\"injected\\nsecret-token\"}}", "trace unknown", "code unknown"),
+    ("{\"error\":[]}", "trace unknown", "code unknown"),
+    ("[]", "trace unknown", "code unknown"),
+    ("not-json secret-token", "trace unknown", "code unknown")
+})
+{
+    using var failureHttp = new HttpClient(new MetaFailureHandler(sample.Item1));
+    var failureClient = new MetaWhatsAppClient(failureHttp, Options.Create(new RePayOptions { MetaPhoneNumberId = "test", MetaAccessToken = "unit-token" }));
+    try { await failureClient.SendTextAsync("966500000000", "private-message", default); throw new Exception("Expected Meta failure"); }
+    catch (HttpRequestException ex)
+    {
+        Check(ex.StatusCode == HttpStatusCode.InternalServerError && ex.Message.Contains(sample.Item2) && ex.Message.Contains(sample.Item3), "Meta failure retains status and safe diagnostics");
+        Check(!ex.Message.Contains("secret-token") && !ex.Message.Contains("customer-message") && !ex.Message.Contains("private-message"), "Meta diagnostics exclude untrusted response text");
+    }
+}
+
 Console.WriteLine("All conversation and analytics checks passed");
 
 sealed class TestProvider : IAgentProvider
@@ -278,4 +298,10 @@ sealed class TestEnvironment : IHostEnvironment
 {
  public string EnvironmentName { get; set; } = "Testing"; public string ApplicationName { get; set; } = "Tests";
  public string ContentRootPath { get; set; } = ""; public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
+}
+
+sealed class MetaFailureHandler(string body) : HttpMessageHandler
+{
+ protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+     Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError) { Content = new StringContent(body) });
 }
