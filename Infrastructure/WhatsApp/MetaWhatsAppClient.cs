@@ -33,9 +33,9 @@ public sealed class MetaWhatsAppClient(HttpClient http, IOptions<RePayOptions> o
     private static async Task EnsureMetaSuccessAsync(HttpResponseMessage response, CancellationToken ct)
     {
         if (response.IsSuccessStatusCode) return;
-        // Allowlisted, bounded provider diagnostics only. Never log request bodies or credentials.
+        // Log only fixed categories and numeric support identifiers; never provider-supplied text.
         string code = "unknown", subcode = "unknown", trace = "unknown", transient = "unknown";
-        string type = "unknown", message = "unknown", details = "unknown";
+        string type = "unknown", messageClass = "unknown", detailsClass = "unknown";
         try
         {
             using var error = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
@@ -53,27 +53,54 @@ public sealed class MetaWhatsAppClient(HttpClient http, IOptions<RePayOptions> o
                     if (candidate is { Length: > 0 and <= 128 } && candidate.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_'))
                         trace = candidate;
                 }
-                type = ReadSafeDiagnostic(errorObject, "type");
-                message = ReadSafeDiagnostic(errorObject, "message");
+                type = ReadSafeType(errorObject);
+                messageClass = ClassifyProviderText(errorObject, "message");
                 if (errorObject.TryGetProperty("error_data", out var errorData)
                     && errorData.ValueKind == JsonValueKind.Object)
-                    details = ReadSafeDiagnostic(errorData, "details");
+                    detailsClass = ClassifyProviderText(errorData, "details");
             }
         }
         catch (JsonException) { }
         throw new HttpRequestException(
-            $"Meta send failed: HTTP {(int)response.StatusCode}, code {code}, subcode {subcode}, transient {transient}, type {type}, message {message}, details {details}, trace {trace}",
+            $"Meta send failed: HTTP {(int)response.StatusCode}, code {code}, subcode {subcode}, transient {transient}, type {type}, message_class {messageClass}, details_class {detailsClass}, trace {trace}",
             null, response.StatusCode);
     }
 
-    private static string ReadSafeDiagnostic(JsonElement parent, string name)
+    private static string ReadSafeType(JsonElement errorObject)
+    {
+        if (!errorObject.TryGetProperty("type", out var value) || value.ValueKind != JsonValueKind.String)
+            return "unknown";
+        return value.GetString() switch
+        {
+            "OAuthException" => "OAuthException",
+            "GraphMethodException" => "GraphMethodException",
+            "GraphAPIException" => "GraphAPIException",
+            _ => "unknown"
+        };
+    }
+
+    private static string ClassifyProviderText(JsonElement parent, string name)
     {
         if (!parent.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.String)
             return "unknown";
         var text = value.GetString();
         if (string.IsNullOrWhiteSpace(text)) return "unknown";
-        // Keep one-line, bounded diagnostics to prevent control characters or oversized log entries.
-        var safe = new string(text.Where(ch => !char.IsControl(ch)).Take(256).ToArray());
-        return string.IsNullOrWhiteSpace(safe) ? "unknown" : safe;
+        // Convert provider text into a fixed category so arbitrary echoed data cannot enter logs.
+        var normalized = text.Trim().ToLowerInvariant();
+        if (normalized.StartsWith("(#"))
+        {
+            var close = normalized.IndexOf(')');
+            if (close >= 0) normalized = normalized[(close + 1)..].Trim();
+        }
+        if (normalized.Contains("unknown error")) return "unknown_error";
+        if (normalized.Contains("invalid request")) return "invalid_request";
+        if (normalized.Contains("permission") || normalized.Contains("access denied")) return "access_restriction";
+        if (normalized.Contains("parameter") || normalized.Contains("missing")) return "invalid_parameter";
+        if (normalized.Contains("template")) return "template";
+        if (normalized.Contains("temporar") || normalized.Contains("unavailable") || normalized.Contains("overloaded"))
+            return "temporary_service_issue";
+        if (normalized.Contains("account") || normalized.Contains("billing") || normalized.Contains("registration"))
+            return "account_configuration";
+        return "unclassified";
     }
 }
