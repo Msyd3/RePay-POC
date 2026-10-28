@@ -24,6 +24,9 @@ public static class WebhookEndpoints
         if (!IsValidSignature(request.Headers["X-Hub-Signature-256"], rawBody, options.Value.MetaAppSecret))
             return Results.Unauthorized();
 
+        var logger = loggerFactory.CreateLogger("Webhook");
+        LogRoutingMetadata(rawBody, options.Value.MetaPhoneNumberId, logger);
+
         // Finish sending and recording the reply even if Meta disconnects while waiting.
         // Otherwise a successful send can be retried because its delivery checkpoint was cancelled.
         using var processing = CancellationTokenSource.CreateLinkedTokenSource(lifetime.ApplicationStopping);
@@ -31,11 +34,59 @@ public static class WebhookEndpoints
         try { await orchestrator.HandleAsync(rawBody, processing.Token); }
         catch (Exception ex)
         {
-            loggerFactory.CreateLogger("Webhook").LogError(ex, "Webhook handling failed");
+            logger.LogError(ex, "Webhook handling failed");
             return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
         }
         return Results.Ok(); // Meta retries non-2xx responses.
     }
+
+    private static void LogRoutingMetadata(string rawBody, string configuredPhoneNumberId, ILogger logger)
+    {
+        try
+        {
+            using var json = JsonDocument.Parse(rawBody);
+            if (!json.RootElement.TryGetProperty("entry", out var entries) || entries.ValueKind != JsonValueKind.Array)
+                return;
+
+            foreach (var entry in entries.EnumerateArray())
+            {
+                var wabaId = ReadString(entry, "id") ?? "unknown";
+                if (!entry.TryGetProperty("changes", out var changes) || changes.ValueKind != JsonValueKind.Array)
+                    continue;
+
+                foreach (var change in changes.EnumerateArray())
+                {
+                    if (!change.TryGetProperty("value", out var value)
+                        || !value.TryGetProperty("metadata", out var metadata))
+                        continue;
+
+                    var phoneNumberId = ReadString(metadata, "phone_number_id") ?? "unknown";
+                    var displayPhoneNumber = ReadString(metadata, "display_phone_number") ?? "unknown";
+                    var field = ReadString(change, "field") ?? "unknown";
+                    var matchesConfiguredPhoneNumberId =
+                        !string.IsNullOrWhiteSpace(configuredPhoneNumberId)
+                        && string.Equals(phoneNumberId, configuredPhoneNumberId, StringComparison.Ordinal);
+
+                    // Log routing metadata only. Never log raw webhook bodies, customer numbers or message text.
+                    logger.LogInformation(
+                        "WhatsApp webhook routing metadata: WabaId={WabaId}, PhoneNumberId={PhoneNumberId}, DisplayPhoneNumber={DisplayPhoneNumber}, Field={Field}, MatchesConfiguredPhoneNumberId={MatchesConfiguredPhoneNumberId}",
+                        wabaId, phoneNumberId, displayPhoneNumber, field, matchesConfiguredPhoneNumberId);
+                }
+            }
+        }
+        catch (JsonException)
+        {
+            // The orchestrator retains responsibility for malformed payload handling.
+            logger.LogWarning("Could not parse signed WhatsApp webhook routing metadata");
+        }
+    }
+
+    private static string? ReadString(JsonElement element, string name) =>
+        element.ValueKind == JsonValueKind.Object
+        && element.TryGetProperty(name, out var value)
+        && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
 
     private static bool IsValidSignature(string? header, string body, string secret)
     {
