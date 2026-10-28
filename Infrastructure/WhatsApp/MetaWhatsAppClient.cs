@@ -33,29 +33,47 @@ public sealed class MetaWhatsAppClient(HttpClient http, IOptions<RePayOptions> o
     private static async Task EnsureMetaSuccessAsync(HttpResponseMessage response, CancellationToken ct)
     {
         if (response.IsSuccessStatusCode) return;
-        // Allowlisted diagnostics only: never log provider messages, raw bodies or credentials.
+        // Allowlisted, bounded provider diagnostics only. Never log request bodies or credentials.
         string code = "unknown", subcode = "unknown", trace = "unknown", transient = "unknown";
+        string type = "unknown", message = "unknown", details = "unknown";
         try
         {
             using var error = JsonDocument.Parse(await response.Content.ReadAsStringAsync(ct));
             if (error.RootElement.ValueKind == JsonValueKind.Object
-                && error.RootElement.TryGetProperty("error", out var details)
-                && details.ValueKind == JsonValueKind.Object)
+                && error.RootElement.TryGetProperty("error", out var errorObject)
+                && errorObject.ValueKind == JsonValueKind.Object)
             {
-                if (details.TryGetProperty("code", out var c) && c.ValueKind == JsonValueKind.Number && c.TryGetInt64(out var n)) code = n.ToString();
-                if (details.TryGetProperty("error_subcode", out var sc) && sc.ValueKind == JsonValueKind.Number && sc.TryGetInt64(out var sn)) subcode = sn.ToString();
-                if (details.TryGetProperty("is_transient", out var t) && t.ValueKind is JsonValueKind.True or JsonValueKind.False)
+                if (errorObject.TryGetProperty("code", out var c) && c.ValueKind == JsonValueKind.Number && c.TryGetInt64(out var n)) code = n.ToString();
+                if (errorObject.TryGetProperty("error_subcode", out var sc) && sc.ValueKind == JsonValueKind.Number && sc.TryGetInt64(out var sn)) subcode = sn.ToString();
+                if (errorObject.TryGetProperty("is_transient", out var t) && t.ValueKind is JsonValueKind.True or JsonValueKind.False)
                     transient = t.GetBoolean() ? "true" : "false";
-                if (details.TryGetProperty("fbtrace_id", out var id) && id.ValueKind == JsonValueKind.String)
+                if (errorObject.TryGetProperty("fbtrace_id", out var id) && id.ValueKind == JsonValueKind.String)
                 {
                     var candidate = id.GetString();
                     if (candidate is { Length: > 0 and <= 128 } && candidate.All(ch => char.IsAsciiLetterOrDigit(ch) || ch is '-' or '_'))
                         trace = candidate;
                 }
+                type = ReadSafeDiagnostic(errorObject, "type");
+                message = ReadSafeDiagnostic(errorObject, "message");
+                if (errorObject.TryGetProperty("error_data", out var errorData)
+                    && errorData.ValueKind == JsonValueKind.Object)
+                    details = ReadSafeDiagnostic(errorData, "details");
             }
         }
         catch (JsonException) { }
-        throw new HttpRequestException($"Meta send failed: HTTP {(int)response.StatusCode}, code {code}, subcode {subcode}, transient {transient}, trace {trace}", null, response.StatusCode);
+        throw new HttpRequestException(
+            $"Meta send failed: HTTP {(int)response.StatusCode}, code {code}, subcode {subcode}, transient {transient}, type {type}, message {message}, details {details}, trace {trace}",
+            null, response.StatusCode);
+    }
+
+    private static string ReadSafeDiagnostic(JsonElement parent, string name)
+    {
+        if (!parent.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.String)
+            return "unknown";
+        var text = value.GetString();
+        if (string.IsNullOrWhiteSpace(text)) return "unknown";
+        // Keep one-line, bounded diagnostics to prevent control characters or oversized log entries.
+        var safe = new string(text.Where(ch => !char.IsControl(ch)).Take(256).ToArray());
+        return string.IsNullOrWhiteSpace(safe) ? "unknown" : safe;
     }
 }
-
