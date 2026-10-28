@@ -45,19 +45,25 @@ public static class WebhookEndpoints
         try
         {
             using var json = JsonDocument.Parse(rawBody);
-            if (!json.RootElement.TryGetProperty("entry", out var entries) || entries.ValueKind != JsonValueKind.Array)
+            if (json.RootElement.ValueKind != JsonValueKind.Object
+                || !json.RootElement.TryGetProperty("entry", out var entries)
+                || entries.ValueKind != JsonValueKind.Array)
                 return;
 
             foreach (var entry in entries.EnumerateArray())
             {
+                if (entry.ValueKind != JsonValueKind.Object) continue;
                 var wabaId = ReadString(entry, "id") ?? "unknown";
                 if (!entry.TryGetProperty("changes", out var changes) || changes.ValueKind != JsonValueKind.Array)
                     continue;
 
                 foreach (var change in changes.EnumerateArray())
                 {
-                    if (!change.TryGetProperty("value", out var value)
-                        || !value.TryGetProperty("metadata", out var metadata))
+                    if (change.ValueKind != JsonValueKind.Object
+                        || !change.TryGetProperty("value", out var value)
+                        || value.ValueKind != JsonValueKind.Object
+                        || !value.TryGetProperty("metadata", out var metadata)
+                        || metadata.ValueKind != JsonValueKind.Object)
                         continue;
 
                     var phoneNumberId = ReadString(metadata, "phone_number_id") ?? "unknown";
