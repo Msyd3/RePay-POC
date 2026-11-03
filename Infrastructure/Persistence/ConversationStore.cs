@@ -1,4 +1,6 @@
 using System.Data.Common;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Options;
@@ -8,6 +10,7 @@ namespace RePay.WhatsAppPoc.Services;
 
 public sealed record ChatTurn(string Role, string Text);
 public sealed record SharedContact(string Name, string Phone);
+public sealed record WebhookInboxItem(string Id, string Payload, int Attempts);
 public sealed class ConversationState
 {
     public string? Name { get; set; }
@@ -48,6 +51,8 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
 {
     // Fixed stripes bound memory and serialize a user's requests on this single-instance POC.
     private readonly SemaphoreSlim[] _locks = Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1)).ToArray();
+    private readonly SemaphoreSlim _inboxLock = new(1, 1);
+    public bool HasDurableWebhookInbox => !string.IsNullOrWhiteSpace(options.Value.DatabaseConnectionString);
     private string DirectoryPath => Path.GetFullPath(options.Value.DataDirectory, environment.ContentRootPath);
     private DbConnection CreateConnection()
     {
@@ -66,6 +71,21 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
         await using var cmd = db.CreateCommand();
         cmd.CommandText = "CREATE TABLE IF NOT EXISTS repay_conversations (phone TEXT PRIMARY KEY, state TEXT NOT NULL)";
         await cmd.ExecuteNonQueryAsync();
+        cmd.CommandText = """
+            CREATE TABLE IF NOT EXISTS repay_webhook_inbox (
+                id TEXT PRIMARY KEY,
+                payload TEXT,
+                status TEXT NOT NULL,
+                attempts INTEGER NOT NULL,
+                available_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                lease_until TEXT,
+                last_error TEXT
+            )
+            """;
+        await cmd.ExecuteNonQueryAsync();
+        cmd.CommandText = "CREATE INDEX IF NOT EXISTS repay_webhook_inbox_due ON repay_webhook_inbox(status,available_at,created_at)";
+        await cmd.ExecuteNonQueryAsync();
         // Preserve legacy names on upgrades when the original file is still available.
         var legacy = Path.Combine(environment.ContentRootPath, "App_Data", "users.json");
         if (!File.Exists(legacy)) return;
@@ -78,6 +98,91 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
             Add(cmd, "state", JsonSerializer.Serialize(new ConversationState { Name = user.GetProperty("Name").GetString(), Welcomed = true }));
             await cmd.ExecuteNonQueryAsync();
         }
+    }
+
+    public async Task<string> EnqueueWebhookAsync(string payload, CancellationToken ct)
+    {
+        var id = Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(payload)));
+        var now = DateTimeOffset.UtcNow.ToString("O");
+        await using var db = CreateConnection();
+        await db.OpenAsync(ct);
+        await using var cmd = db.CreateCommand();
+        cmd.CommandText = """
+            INSERT INTO repay_webhook_inbox(id,payload,status,attempts,available_at,created_at,lease_until,last_error)
+            VALUES (@id,@payload,'pending',0,@now,@now,NULL,NULL)
+            ON CONFLICT(id) DO NOTHING
+            """;
+        Add(cmd, "id", id);
+        Add(cmd, "payload", payload);
+        Add(cmd, "now", now);
+        await cmd.ExecuteNonQueryAsync(ct);
+        return id;
+    }
+
+    public async Task<WebhookInboxItem?> ClaimWebhookAsync(CancellationToken ct)
+    {
+        await _inboxLock.WaitAsync(ct);
+        try
+        {
+            var now = DateTimeOffset.UtcNow;
+            var nowText = now.ToString("O");
+            var leaseText = now.AddMinutes(2).ToString("O");
+            await using var db = CreateConnection();
+            await db.OpenAsync(ct);
+            await using var select = db.CreateCommand();
+            select.CommandText = """
+                SELECT id,payload,attempts FROM repay_webhook_inbox
+                WHERE payload IS NOT NULL AND (
+                    (status='pending' AND available_at <= @now)
+                    OR (status='processing' AND lease_until <= @now)
+                )
+                ORDER BY created_at LIMIT 1
+                """;
+            Add(select, "now", nowText);
+            await using var reader = await select.ExecuteReaderAsync(ct);
+            if (!await reader.ReadAsync(ct)) return null;
+            var id = reader.GetString(0);
+            var payload = reader.GetString(1);
+            var attempts = reader.GetInt32(2) + 1;
+            await reader.DisposeAsync();
+
+            await using var update = db.CreateCommand();
+            update.CommandText = "UPDATE repay_webhook_inbox SET status='processing',attempts=@attempts,lease_until=@lease WHERE id=@id";
+            Add(update, "attempts", attempts);
+            Add(update, "lease", leaseText);
+            Add(update, "id", id);
+            await update.ExecuteNonQueryAsync(ct);
+            return new WebhookInboxItem(id, payload, attempts);
+        }
+        finally { _inboxLock.Release(); }
+    }
+
+    public async Task CompleteWebhookAsync(string id, CancellationToken ct)
+    {
+        await using var db = CreateConnection();
+        await db.OpenAsync(ct);
+        await using var cmd = db.CreateCommand();
+        cmd.CommandText = "DELETE FROM repay_webhook_inbox WHERE id=@id";
+        Add(cmd, "id", id);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task RetryWebhookAsync(WebhookInboxItem item, string errorType, CancellationToken ct)
+    {
+        const int maxAttempts = 8;
+        var isDeadLetter = item.Attempts >= maxAttempts;
+        var delaySeconds = Math.Min(600, 10 * Math.Pow(2, Math.Max(0, item.Attempts - 1)));
+        var availableAt = DateTimeOffset.UtcNow.AddSeconds(delaySeconds).ToString("O");
+        await using var db = CreateConnection();
+        await db.OpenAsync(ct);
+        await using var cmd = db.CreateCommand();
+        cmd.CommandText = isDeadLetter
+            ? "UPDATE repay_webhook_inbox SET status='failed',payload=NULL,lease_until=NULL,last_error=@error WHERE id=@id"
+            : "UPDATE repay_webhook_inbox SET status='pending',available_at=@available,lease_until=NULL,last_error=@error WHERE id=@id";
+        Add(cmd, "id", item.Id);
+        Add(cmd, "error", errorType);
+        if (!isDeadLetter) Add(cmd, "available", availableAt);
+        await cmd.ExecuteNonQueryAsync(ct);
     }
 
     public async Task<Session> OpenSessionAsync(string phone, CancellationToken ct)
@@ -141,6 +246,11 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
     }
 
     private static void Add(DbCommand cmd, string name, string value)
+    {
+        var parameter = cmd.CreateParameter(); parameter.ParameterName = name; parameter.Value = value; cmd.Parameters.Add(parameter);
+    }
+
+    private static void Add(DbCommand cmd, string name, int value)
     {
         var parameter = cmd.CreateParameter(); parameter.ParameterName = name; parameter.Value = value; cmd.Parameters.Add(parameter);
     }

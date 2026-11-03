@@ -29,6 +29,7 @@ Read `.env.example` and `Configuration/RePayOptions.cs`. Configuration uses `ReP
 
 - Render `Service Unavailable` before a build starts: inspect host status and event log; changing conversation code cannot fix a platform outage.
 - No inbound reply: confirm live `/health`, callback URL, signature secret, correct WABA subscription, current phone resource ID/token and provider/database connectivity.
+- Webhook POST returns `200` after a signed event is accepted by the hosted worker. With PostgreSQL it is persisted to `repay_webhook_inbox`; without PostgreSQL (the current Render blueprint), it uses a bounded in-memory queue and retries up to eight times. The in-memory queue is lost on restart, so configure durable PostgreSQL for reliable production delivery. Check application logs for the event hash and retry attempt.
 - HTTP 401: signature or dashboard authentication failed. Never disable signature verification as a workaround.
 - Meta accepts send but nothing arrives: inspect delivery error in webhook status. Plain text needs an open customer service window; otherwise use an approved template under current Meta rules.
 - The system-user token created during setup expires after 60 days. Rotate before expiry and test; do not put the token in URLs, tickets or screenshots.

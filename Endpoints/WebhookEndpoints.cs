@@ -17,27 +17,37 @@ public static class WebhookEndpoints
     }
 
     public static async Task<IResult> ReceiveAsync(HttpRequest request, IOptions<RePayOptions> options,
-        WhatsAppOrchestrator orchestrator, ILoggerFactory loggerFactory, IHostApplicationLifetime lifetime)
+        ConversationStore store, WebhookInboxQueue inbox, ILogger<WebhookEndpointsMarker> logger)
     {
         using var bodyReader = new StreamReader(request.Body, Encoding.UTF8);
         var rawBody = await bodyReader.ReadToEndAsync();
         if (!IsValidSignature(request.Headers["X-Hub-Signature-256"], rawBody, options.Value.MetaAppSecret))
             return Results.Unauthorized();
 
-        var logger = loggerFactory.CreateLogger("Webhook");
         LogRoutingMetadata(rawBody, options.Value.MetaPhoneNumberId, logger);
-
-        // Finish sending and recording the reply even if Meta disconnects while waiting.
-        // Otherwise a successful send can be retried because its delivery checkpoint was cancelled.
-        using var processing = CancellationTokenSource.CreateLinkedTokenSource(lifetime.ApplicationStopping);
-        processing.CancelAfter(TimeSpan.FromSeconds(60));
-        try { await orchestrator.HandleAsync(rawBody, processing.Token); }
+        // Save to PostgreSQL when configured; otherwise enqueue in a bounded
+        // in-memory queue so outbound Meta failures do not trigger webhook storms.
+        try
+        {
+            if (store.HasDurableWebhookInbox)
+            {
+                var id = await store.EnqueueWebhookAsync(rawBody, request.HttpContext.RequestAborted);
+                logger.LogInformation("WhatsApp webhook persisted: EventId={EventId}", id);
+            }
+            else if (!inbox.TryEnqueue(rawBody))
+            {
+                logger.LogWarning("WhatsApp webhook queue is full; asking Meta to retry");
+                return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
+            }
+        }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Webhook handling failed");
+            logger.LogError(ex, "WhatsApp webhook could not be persisted");
             return Results.StatusCode(StatusCodes.Status503ServiceUnavailable);
         }
-        return Results.Ok(); // Meta retries non-2xx responses.
+        // The worker now handles sending. A Graph API failure is retried there,
+        // without making Meta redeliver an already-accepted inbound event.
+        return Results.Ok();
     }
 
     private static void LogRoutingMetadata(string rawBody, string configuredPhoneNumberId, ILogger logger)
@@ -105,3 +115,6 @@ public static class WebhookEndpoints
     private static bool FixedTimeEquals(string a, string b) =>
         CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(a), Encoding.UTF8.GetBytes(b));
 }
+
+// A named marker type keeps webhook logging categories stable without exposing payload data.
+public sealed class WebhookEndpointsMarker { }

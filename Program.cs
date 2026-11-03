@@ -15,6 +15,8 @@ builder.Services.AddScoped<IAgentProvider>(sp => sp.GetRequiredService<GeminiAge
 builder.Services.AddScoped<AgentRouter>();
 builder.Services.AddSingleton<ConversationStore>();
 builder.Services.AddScoped<WhatsAppOrchestrator>();
+builder.Services.AddSingleton<WebhookInboxQueue>();
+builder.Services.AddHostedService<WebhookInboxWorker>();
 
 builder.Services.AddRateLimiter(options =>
 {
