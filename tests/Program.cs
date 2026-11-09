@@ -238,7 +238,7 @@ Check(arabicIdentity.Language == "ar" && reply.Contains("ملخص العملية
 reply = await Reply(arabicIdentity, "هل الشركة مرخصة؟");
 Check(reply.Contains("https://repay.sa") && arabicIdentity.Transfer?.Amount == 30, "Company question routes to website without mutating send");
 using(var cta = JsonDocument.Parse(handler.Bodies.First(body=>body.Contains("cta_url"))))
- Check(cta.RootElement.GetProperty("interactive").GetProperty("action").GetProperty("parameters").GetProperty("url").GetString()=="https://repay.sa", "CTA opens exact supplied website without embedding private details");
+ Check(System.Text.RegularExpressions.Regex.IsMatch(cta.RootElement.GetProperty("interactive").GetProperty("action").GetProperty("parameters").GetProperty("url").GetString() ?? "", @"^https://wallet\.repay\.sa/summary\?id=[a-f0-9]{32}$"), "CTA opens wallet summary using only an opaque review ID");
 // Security regressions: identifiers cannot authenticate, blank tokens fail closed.
 var verifyRequest = new Microsoft.AspNetCore.Http.DefaultHttpContext().Request;
 verifyRequest.QueryString = new Microsoft.AspNetCore.Http.QueryString("?hub.mode=subscribe&hub.verify_token=&hub.challenge=test");

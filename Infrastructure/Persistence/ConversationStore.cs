@@ -86,6 +86,10 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
         await cmd.ExecuteNonQueryAsync();
         cmd.CommandText = "CREATE INDEX IF NOT EXISTS repay_webhook_inbox_due ON repay_webhook_inbox(status,available_at,created_at)";
         await cmd.ExecuteNonQueryAsync();
+        cmd.CommandText = "CREATE TABLE IF NOT EXISTS repay_transfer_reviews (id TEXT PRIMARY KEY, payload TEXT NOT NULL, expires_at TEXT NOT NULL)";
+        await cmd.ExecuteNonQueryAsync();
+        cmd.CommandText = "CREATE INDEX IF NOT EXISTS repay_transfer_reviews_expiry ON repay_transfer_reviews(expires_at)";
+        await cmd.ExecuteNonQueryAsync();
         // Preserve legacy names on upgrades when the original file is still available.
         var legacy = Path.Combine(environment.ContentRootPath, "App_Data", "users.json");
         if (!File.Exists(legacy)) return;
@@ -213,6 +217,36 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
         Add(cmd, "phone", phone);
         Add(cmd, "state", JsonSerializer.Serialize(state));
         await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task PublishTransferReviewAsync(TransferReview review, DateTimeOffset expiresAt, CancellationToken ct)
+    {
+        var expiresText = expiresAt.ToUniversalTime().ToString("O");
+        await using var db = CreateConnection();
+        await db.OpenAsync(ct);
+        await using var cmd = db.CreateCommand();
+        cmd.CommandText = "DELETE FROM repay_transfer_reviews WHERE expires_at <= @now";
+        Add(cmd, "now", DateTimeOffset.UtcNow.ToString("O"));
+        await cmd.ExecuteNonQueryAsync(ct);
+        cmd.Parameters.Clear();
+        cmd.CommandText = "INSERT INTO repay_transfer_reviews(id,payload,expires_at) VALUES (@id,@payload,@expires) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,expires_at=excluded.expires_at";
+        Add(cmd, "id", review.Id);
+        Add(cmd, "payload", JsonSerializer.Serialize(review));
+        Add(cmd, "expires", expiresText);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
+    public async Task<TransferReview?> GetTransferReviewAsync(string id, CancellationToken ct)
+    {
+        if (id.Length != 32 || !id.All(ch => ch is >= '0' and <= '9' or >= 'a' and <= 'f')) return null;
+        await using var db = CreateConnection();
+        await db.OpenAsync(ct);
+        await using var cmd = db.CreateCommand();
+        cmd.CommandText = "SELECT payload FROM repay_transfer_reviews WHERE id=@id AND expires_at > @now";
+        Add(cmd, "id", id);
+        Add(cmd, "now", DateTimeOffset.UtcNow.ToString("O"));
+        var payload = await cmd.ExecuteScalarAsync(ct) as string;
+        return payload is null ? null : JsonSerializer.Deserialize<TransferReview>(payload);
     }
 
     public async Task<object> AnalyticsAsync(CancellationToken ct)

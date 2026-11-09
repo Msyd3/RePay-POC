@@ -46,7 +46,24 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             if (state.PendingReplyIndex == 0)
             {
                 if (state.PendingReviewButton is { } reviewId)
+                {
+                    var draft = state.Transfer;
+                    if (draft is null || draft.ReviewId != reviewId || draft.Amount is null
+                        || draft.RecipientName is null || draft.RecipientPhone is null || draft.ReviewExpiresAt is null
+                        || state.Name is null)
+                        throw new InvalidOperationException("Transfer review is missing required summary data.");
+                    var review = new TransferReview(
+                        reviewId,
+                        "pending",
+                        "RePay",
+                        new TransferReviewPerson(message.Phone, null, state.Name, message.Phone),
+                        new TransferReviewPerson(draft.RecipientPhone, null, draft.RecipientName, draft.RecipientPhone),
+                        checked((int)(draft.Amount.Value * 100m)),
+                        "SAR",
+                        draft.Note);
+                    await store.PublishTransferReviewAsync(review, draft.ReviewExpiresAt.Value, ct);
                     await whatsapp.SendReviewAsync(message.Phone, reply, reviewId, state.Language, ct);
+                }
                 else await whatsapp.SendTextAsync(message.Phone, reply, ct);
                 state.PendingReplyIndex = 1;
                 await session.SaveAsync(ct);
