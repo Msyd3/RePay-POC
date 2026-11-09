@@ -17,6 +17,8 @@ builder.Services.AddSingleton<ConversationStore>();
 builder.Services.AddScoped<WhatsAppOrchestrator>();
 builder.Services.AddSingleton<WebhookInboxQueue>();
 builder.Services.AddHostedService<WebhookInboxWorker>();
+builder.Services.AddCors(options => options.AddPolicy("wallet-summary", policy =>
+    policy.WithOrigins("https://wallet.repay.sa").WithMethods("GET").AllowAnyHeader()));
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -24,6 +26,12 @@ builder.Services.AddRateLimiter(options =>
     options.AddFixedWindowLimiter("analytics", limiter =>
     {
         limiter.PermitLimit = 30;
+        limiter.Window = TimeSpan.FromMinutes(1);
+        limiter.QueueLimit = 0;
+    });
+    options.AddFixedWindowLimiter("transfer-review", limiter =>
+    {
+        limiter.PermitLimit = 60;
         limiter.Window = TimeSpan.FromMinutes(1);
         limiter.QueueLimit = 0;
     });
@@ -38,6 +46,7 @@ app.Use(async (context, next) =>
     context.Response.Headers["X-Frame-Options"] = "DENY";
     await next();
 });
+app.UseCors("wallet-summary");
 app.UseRateLimiter();
 app.UseStaticFiles();
 app.MapGet("/analytics", () => Results.Redirect("/analytics.html"));
@@ -47,6 +56,7 @@ app.MapGet("/api/analytics/login-mode", (Microsoft.Extensions.Options.IOptions<R
     return Results.Ok(new { phone = false });
 });
 app.MapGet("/api/analytics", AnalyticsEndpoints.GetAsync).RequireRateLimiting("analytics");
+app.MapGet("/api/transfer-reviews/{id}", TransferReviewEndpoints.GetAsync).RequireRateLimiting("transfer-review");
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 app.MapGet("/webhooks/whatsapp", WebhookEndpoints.VerifyAsync);
 app.MapPost("/webhooks/whatsapp", WebhookEndpoints.ReceiveAsync);
