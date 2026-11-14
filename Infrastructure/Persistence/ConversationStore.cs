@@ -29,6 +29,7 @@ public sealed class ConversationState
     public decimal TransferAmountTotal { get; set; }
     public long RecordedTransferAmounts { get; set; }
     public long PaymentExamples { get; set; }
+    public DateTimeOffset? FirstMessageAt { get; set; }
     public DateTimeOffset? LastMessageAt { get; set; }
     public string? PendingMessageId { get; set; }
     public string? PendingReply { get; set; }
@@ -265,7 +266,7 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
             s.RecordTransferAmount();
             var phone = rows.GetString(0);
             var repeat = s.RecordedTransferAmounts;
-            userList.Add(new { name = s.Name ?? "لم يحدد الاسم", mobile = ConversationLifecycle.MaskPhone(phone), operations = s.RecordedTransferAmounts, averageOperations = s.ConversationCount == 0 ? 0 : (decimal)s.RecordedTransferAmounts / s.ConversationCount, conversations = s.ConversationCount });
+            userList.Add(new { name = s.Name ?? "لم يحدد الاسم", mobile = ConversationLifecycle.MaskPhone(phone), operations = s.RecordedTransferAmounts, averageOperations = s.ConversationCount == 0 ? 0 : (decimal)s.RecordedTransferAmounts / s.ConversationCount, conversations = s.ConversationCount, registeredAt = s.FirstMessageAt });
             users++;
             conversations += s.ConversationCount;
             transfers += s.RecordedTransferAmounts;

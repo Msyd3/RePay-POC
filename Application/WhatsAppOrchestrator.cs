@@ -40,6 +40,9 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             reply = ConversationLifecycle.Format(reply);
             if (state.PendingFollowUp is not null) state.PendingFollowUp = ConversationLifecycle.Format(state.PendingFollowUp);
             // Persist the generated reply and demo transition, so retries do not advance the example twice.
+            if (state.MessageCount == 0 && state.LastMessageAt is null &&
+                (state.FirstMessageAt is null || message.SentAt < state.FirstMessageAt))
+                state.FirstMessageAt = message.SentAt;
             state.PendingMessageId = message.Id;
             state.PendingReply = reply;
             await session.SaveAsync(ct);
