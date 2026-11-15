@@ -30,6 +30,7 @@ public sealed class ConversationState
     public long RecordedTransferAmounts { get; set; }
     public long PaymentExamples { get; set; }
     public DateTimeOffset? FirstMessageAt { get; set; }
+    public long? WaitlistNumber { get; set; }
     public DateTimeOffset? LastMessageAt { get; set; }
     public string? PendingMessageId { get; set; }
     public string? PendingReply { get; set; }
@@ -53,6 +54,7 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
     // Fixed stripes bound memory and serialize a user's requests on this single-instance POC.
     private readonly SemaphoreSlim[] _locks = Enumerable.Range(0, 64).Select(_ => new SemaphoreSlim(1)).ToArray();
     private readonly SemaphoreSlim _inboxLock = new(1, 1);
+    private readonly SemaphoreSlim _waitlistLock = new(1, 1);
     public bool HasDurableWebhookInbox => !string.IsNullOrWhiteSpace(options.Value.DatabaseConnectionString);
     private string DirectoryPath => Path.GetFullPath(options.Value.DataDirectory, environment.ContentRootPath);
     private DbConnection CreateConnection()
@@ -90,6 +92,8 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
         cmd.CommandText = "CREATE TABLE IF NOT EXISTS repay_transfer_reviews (id TEXT PRIMARY KEY, payload TEXT NOT NULL, expires_at TEXT NOT NULL)";
         await cmd.ExecuteNonQueryAsync();
         cmd.CommandText = "CREATE INDEX IF NOT EXISTS repay_transfer_reviews_expiry ON repay_transfer_reviews(expires_at)";
+        await cmd.ExecuteNonQueryAsync();
+        cmd.CommandText = "CREATE TABLE IF NOT EXISTS repay_transfer_demo_notifications (id TEXT PRIMARY KEY)";
         await cmd.ExecuteNonQueryAsync();
         // Preserve legacy names on upgrades when the original file is still available.
         var legacy = Path.Combine(environment.ContentRootPath, "App_Data", "users.json");
@@ -190,6 +194,66 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
+    public async Task<long> EnsureWaitlistNumberAsync(string phone, CancellationToken ct)
+    {
+        var numbers = await EnsureWaitlistNumbersAsync(ct);
+        return numbers.TryGetValue(phone, out var number) ? number : throw new InvalidOperationException("Waitlist number was not assigned.");
+    }
+
+    private async Task<Dictionary<string, long>> EnsureWaitlistNumbersAsync(CancellationToken ct)
+    {
+        await _waitlistLock.WaitAsync(ct);
+        try
+        {
+            await using var db = CreateConnection();
+            await db.OpenAsync(ct);
+            await using var select = db.CreateCommand();
+            select.CommandText = "SELECT phone,state FROM repay_conversations";
+            var rows = new List<(string Phone, ConversationState State)>();
+            await using (var reader = await select.ExecuteReaderAsync(ct))
+                while (await reader.ReadAsync(ct))
+                    rows.Add((reader.GetString(0), JsonSerializer.Deserialize<ConversationState>(reader.GetString(1)) ?? throw new InvalidDataException("Invalid conversation state")));
+
+            var next = rows.Where(row => row.State.WaitlistNumber is not null).Select(row => row.State.WaitlistNumber!.Value).DefaultIfEmpty(0).Max() + 1;
+            var changed = rows.Where(row => row.State.WaitlistNumber is null)
+                .OrderBy(row => row.State.FirstMessageAt ?? DateTimeOffset.MaxValue)
+                .ThenBy(row => row.Phone, StringComparer.Ordinal)
+                .ToList();
+            foreach (var row in changed) row.State.WaitlistNumber = next++;
+
+            foreach (var row in changed)
+            {
+                await using var update = db.CreateCommand();
+                update.CommandText = "UPDATE repay_conversations SET state=@state WHERE phone=@phone";
+                Add(update, "phone", row.Phone);
+                Add(update, "state", JsonSerializer.Serialize(row.State));
+                await update.ExecuteNonQueryAsync(ct);
+            }
+            return rows.ToDictionary(row => row.Phone, row => row.State.WaitlistNumber!.Value, StringComparer.Ordinal);
+        }
+        finally { _waitlistLock.Release(); }
+    }
+
+    public async Task<bool> TryMarkDemoNotificationAsync(string id, CancellationToken ct)
+    {
+        await using var db = CreateConnection();
+        await db.OpenAsync(ct);
+        await using var cmd = db.CreateCommand();
+        cmd.CommandText = "INSERT INTO repay_transfer_demo_notifications(id) VALUES (@id) ON CONFLICT(id) DO NOTHING";
+        Add(cmd, "id", id);
+        return await cmd.ExecuteNonQueryAsync(ct) == 1;
+    }
+
+    public async Task RemoveDemoNotificationMarkAsync(string id, CancellationToken ct)
+    {
+        await using var db = CreateConnection();
+        await db.OpenAsync(ct);
+        await using var cmd = db.CreateCommand();
+        cmd.CommandText = "DELETE FROM repay_transfer_demo_notifications WHERE id=@id";
+        Add(cmd, "id", id);
+        await cmd.ExecuteNonQueryAsync(ct);
+    }
+
     public async Task<Session> OpenSessionAsync(string phone, CancellationToken ct)
     {
         var gate = _locks[(uint)StringComparer.Ordinal.GetHashCode(phone) % (uint)_locks.Length];
@@ -252,6 +316,7 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
 
     public async Task<object> AnalyticsAsync(CancellationToken ct)
     {
+        var waitlistNumbers = await EnsureWaitlistNumbersAsync(ct);
         await using var db = CreateConnection();
         await db.OpenAsync(ct);
         await using var cmd = db.CreateCommand();
@@ -266,7 +331,7 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
             s.RecordTransferAmount();
             var phone = rows.GetString(0);
             var repeat = s.RecordedTransferAmounts;
-            userList.Add(new { name = s.Name ?? "لم يحدد الاسم", mobile = ConversationLifecycle.MaskPhone(phone), operations = s.RecordedTransferAmounts, averageOperations = s.ConversationCount == 0 ? 0 : (decimal)s.RecordedTransferAmounts / s.ConversationCount, conversations = s.ConversationCount, registeredAt = s.FirstMessageAt });
+            userList.Add(new { waitlistNumber = waitlistNumbers[phone], name = s.Name ?? "لم يحدد الاسم", mobile = ConversationLifecycle.MaskPhone(phone), operations = s.RecordedTransferAmounts, averageOperations = s.ConversationCount == 0 ? 0 : (decimal)s.RecordedTransferAmounts / s.ConversationCount, conversations = s.ConversationCount, registeredAt = s.FirstMessageAt });
             users++;
             conversations += s.ConversationCount;
             transfers += s.RecordedTransferAmounts;
