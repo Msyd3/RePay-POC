@@ -18,7 +18,7 @@ builder.Services.AddScoped<WhatsAppOrchestrator>();
 builder.Services.AddSingleton<WebhookInboxQueue>();
 builder.Services.AddHostedService<WebhookInboxWorker>();
 builder.Services.AddCors(options => options.AddPolicy("wallet-summary", policy =>
-    policy.WithOrigins("https://wallet.repay.sa").WithMethods("GET").AllowAnyHeader()));
+    policy.WithOrigins("https://wallet.repay.sa").WithMethods("GET", "POST").AllowAnyHeader()));
 
 builder.Services.AddRateLimiter(options =>
 {
@@ -57,6 +57,7 @@ app.MapGet("/api/analytics/login-mode", (Microsoft.Extensions.Options.IOptions<R
 });
 app.MapGet("/api/analytics", AnalyticsEndpoints.GetAsync).RequireRateLimiting("analytics");
 app.MapGet("/api/transfer-reviews/{id}", TransferReviewEndpoints.GetAsync).RequireRateLimiting("transfer-review");
+app.MapPost("/api/transfer-reviews/{id}/opened", DemoEndpoints.NotifyTransferReviewOpenedAsync).RequireRateLimiting("transfer-review");
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 app.MapGet("/webhooks/whatsapp", WebhookEndpoints.VerifyAsync);
 app.MapPost("/webhooks/whatsapp", WebhookEndpoints.ReceiveAsync);
