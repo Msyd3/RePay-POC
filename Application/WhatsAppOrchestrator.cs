@@ -101,8 +101,14 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
         }
     }
 
-    private static bool IsWaitlistQuestion(string text) =>
-        Regex.IsMatch(text, @"(?:كم\s*(?:رقمي|رقم(?:ي)?)|رقم(?:ي)?\s*(?:في\s*)?(?:قائمة\s*)?الانتظار|قائمة\s*الانتظار)", RegexOptions.IgnoreCase);
+    private static bool IsWaitlistQuestion(string text)
+    {
+        var normalized = text.Trim()
+            .Replace('أ', 'ا').Replace('إ', 'ا').Replace('آ', 'ا').Replace('ى', 'ي')
+            .Replace("ـ", string.Empty);
+        return Regex.IsMatch(normalized, @"(?:انتظار|قائمه\s*الانتظار|دوري|ترتيبي|ترتيب(?:ي)?|مركزي|مكان(?:ي)?|رقم(?:ي)?|queue|waitlist)", RegexOptions.IgnoreCase)
+            && Regex.IsMatch(normalized, @"(?:كم|وش|ايش|اي|وين|ما\s*(?:هو|هي)|رقم|ترتيب|دور|مكان|مركز|what|where|which|my)", RegexOptions.IgnoreCase);
+    }
 
     private static string ToArabicDigits(long number) =>
         number.ToString(System.Globalization.CultureInfo.InvariantCulture)
