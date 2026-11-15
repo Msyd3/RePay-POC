@@ -35,6 +35,11 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             if (!retry) { ConversationLifecycle.Expire(state, DateTimeOffset.UtcNow); state.PendingFollowUp = null; state.PendingReplyIndex = 0; }
             if (retry)
                 reply = state.PendingReply!;
+            else if (IsWaitlistQuestion(message.Text))
+            {
+                var waitlistNumber = await store.EnsureWaitlistNumberAsync(message.Phone, ct);
+                reply = $"رقمك في قائمة الانتظار {ToArabicDigits(waitlistNumber)} 👋🏼";
+            }
             else
                 reply = await TransferConversation.ReplyAsync(state, message.Text, agent, ct);
             reply = ConversationLifecycle.Format(reply);
@@ -95,6 +100,14 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
             await session.SaveAsync(ct);
         }
     }
+
+    private static bool IsWaitlistQuestion(string text) =>
+        Regex.IsMatch(text, @"(?:كم\s*(?:رقمي|رقم(?:ي)?)|رقم(?:ي)?\s*(?:في\s*)?(?:قائمة\s*)?الانتظار|قائمة\s*الانتظار)", RegexOptions.IgnoreCase);
+
+    private static string ToArabicDigits(long number) =>
+        number.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            .Replace('0', '٠').Replace('1', '١').Replace('2', '٢').Replace('3', '٣').Replace('4', '٤')
+            .Replace('5', '٥').Replace('6', '٦').Replace('7', '٧').Replace('8', '٨').Replace('9', '٩');
 
     private static string RedactPhone(string text) => Regex.Replace(text, @"[+＋]?[0-9٠-٩][0-9٠-٩ ()-]{7,}[0-9٠-٩]", "[رقم جوال]");
 
