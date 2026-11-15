@@ -13,10 +13,22 @@ public static class DemoEndpoints
         var review = await store.GetTransferReviewAsync(id, ct);
         if (review is null) return Results.NotFound();
 
-        await whatsapp.SendTextAsync(
-            review.Sender.Phone,
-            "هذه عملية تجريبية 👋🏼\n\nكذا بيكون التحويل في ري باي: أرسل رسالة باسم المستفيد أو شارك جهة اتصاله وحدد المبلغ، ثم راجع العملية وأكّدها.\n\nما تم تحويل أي مبلغ.",
-            ct);
+        if (!await store.TryMarkDemoNotificationAsync(id, ct))
+            return Results.NoContent();
+
+        try
+        {
+            var waitlistNumber = await store.EnsureWaitlistNumberAsync(review.Sender.Phone, ct);
+            await whatsapp.SendTextAsync(
+                review.Sender.Phone,
+                $"هذه عملية تجريبية 👋🏼\nرقمك في قائمة الانتظار {waitlistNumber}",
+                ct);
+        }
+        catch
+        {
+            await store.RemoveDemoNotificationMarkAsync(id, ct);
+            throw;
+        }
 
         return Results.NoContent();
     }
