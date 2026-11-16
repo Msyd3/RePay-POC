@@ -230,7 +230,7 @@ public static class TransferConversation
         d.RequestedField = "review";
         s.RecordTransferAmount();
         d.ReviewId = Guid.NewGuid().ToString("N");
-        d.ReviewExpiresAt = DateTimeOffset.UtcNow.AddMinutes(3);
+        d.ReviewExpiresAt = DateTimeOffset.UtcNow.AddMinutes(5);
         s.PendingReviewButton = d.ReviewId;
         var amount = d.Amount.Value.ToString("0.00", CultureInfo.InvariantCulture);
         return Say(s,
