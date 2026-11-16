@@ -331,7 +331,9 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
             s.RecordTransferAmount();
             var phone = rows.GetString(0);
             var repeat = s.RecordedTransferAmounts;
-            userList.Add(new { waitlistNumber = waitlistNumbers[phone], name = s.Name ?? "لم يحدد الاسم", mobile = ConversationLifecycle.MaskPhone(phone), operations = s.RecordedTransferAmounts, averageOperations = s.ConversationCount == 0 ? 0 : (decimal)s.RecordedTransferAmounts / s.ConversationCount, conversations = s.ConversationCount, registeredAt = s.FirstMessageAt });
+            userList.Add(new { waitlistNumber = waitlistNumbers[phone], phoneAvatarKey = Convert.ToHexString(
+                HMACSHA256.HashData(Encoding.UTF8.GetBytes(options.Value.AnalyticsPassword ?? ""),
+                    Encoding.UTF8.GetBytes("repay-avatar-phone:" + phone))).ToLowerInvariant(), name = s.Name ?? "لم يحدد الاسم", mobile = ConversationLifecycle.MaskPhone(phone), operations = s.RecordedTransferAmounts, averageOperations = s.ConversationCount == 0 ? 0 : (decimal)s.RecordedTransferAmounts / s.ConversationCount, conversations = s.ConversationCount, registeredAt = s.FirstMessageAt });
             users++;
             conversations += s.ConversationCount;
             transfers += s.RecordedTransferAmounts;
