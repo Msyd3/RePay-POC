@@ -31,6 +31,7 @@ public sealed class ConversationState
     public long PaymentExamples { get; set; }
     public DateTimeOffset? FirstMessageAt { get; set; }
     public long? WaitlistNumber { get; set; }
+    public string? ReferralCode { get; set; }
     public DateTimeOffset? LastMessageAt { get; set; }
     public string? PendingMessageId { get; set; }
     public string? PendingReply { get; set; }
@@ -232,6 +233,17 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
             return rows.ToDictionary(row => row.Phone, row => row.State.WaitlistNumber!.Value, StringComparer.Ordinal);
         }
         finally { _waitlistLock.Release(); }
+    }
+
+    public async Task<string> EnsureReferralCodeAsync(string phone, CancellationToken ct)
+    {
+        await using var session = await OpenSessionAsync(phone, ct);
+        if (string.IsNullOrWhiteSpace(session.State.ReferralCode))
+        {
+            session.State.ReferralCode = Convert.ToHexStringLower(RandomNumberGenerator.GetBytes(8));
+            await session.SaveAsync(ct);
+        }
+        return session.State.ReferralCode;
     }
 
     public async Task<bool> TryMarkDemoNotificationAsync(string id, CancellationToken ct)
