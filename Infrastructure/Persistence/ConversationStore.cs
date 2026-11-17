@@ -307,11 +307,20 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
         await using var db = CreateConnection();
         await db.OpenAsync(ct);
         await using var cmd = db.CreateCommand();
-        cmd.CommandText = "SELECT payload FROM repay_transfer_reviews WHERE id=@id AND expires_at > @now";
+        // Compare parsed timestamps rather than database text values. This is
+        // consistent across SQLite and PostgreSQL and ensures old links expire.
+        cmd.CommandText = "SELECT payload,expires_at FROM repay_transfer_reviews WHERE id=@id";
         Add(cmd, "id", id);
-        Add(cmd, "now", DateTimeOffset.UtcNow.ToString("O"));
-        var payload = await cmd.ExecuteScalarAsync(ct) as string;
-        return payload is null ? null : JsonSerializer.Deserialize<TransferReview>(payload);
+        await using var reader = await cmd.ExecuteReaderAsync(ct);
+        if (!await reader.ReadAsync(ct)) return null;
+
+        var expiresText = reader.GetString(1);
+        if (!DateTimeOffset.TryParse(expiresText, System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.RoundtripKind, out var expiresAt)
+            || expiresAt <= DateTimeOffset.UtcNow)
+            return null;
+
+        return JsonSerializer.Deserialize<TransferReview>(reader.GetString(0));
     }
 
     public async Task<object> AnalyticsAsync(CancellationToken ct)
