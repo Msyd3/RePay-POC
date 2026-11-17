@@ -20,34 +20,6 @@ public sealed class MetaWhatsAppClient(HttpClient http, IOptions<RePayOptions> o
         using var response = await http.SendAsync(request, ct);
         await EnsureMetaSuccessAsync(response, ct);
     }
-    public async Task SendWaitlistCtaAsync(string to, string text, CancellationToken ct)
-    {
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"https://graph.facebook.com/{_options.MetaGraphApiVersion}/{_options.MetaPhoneNumberId}/messages");
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", _options.MetaAccessToken);
-        request.Content = JsonContent.Create(new
-        {
-            messaging_product = "whatsapp",
-            to,
-            type = "interactive",
-            interactive = new
-            {
-                type = "cta_url",
-                body = new { text },
-                action = new
-                {
-                    name = "cta_url",
-                    parameters = new
-                    {
-                        url = "https://wallet.repay.sa/waitlist/",
-                        display_text = "قائمة الانتظار"
-                    }
-                }
-            }
-        });
-        await request.Content.LoadIntoBufferAsync(ct);
-        using var response = await http.SendAsync(request, ct);
-        await EnsureMetaSuccessAsync(response, ct);
-    }
     public async Task SendTextAsync(string to, string text, CancellationToken ct)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post,
