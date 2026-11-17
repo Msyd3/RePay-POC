@@ -58,7 +58,6 @@ app.MapGet("/api/analytics/login-mode", (Microsoft.Extensions.Options.IOptions<R
 app.MapGet("/api/analytics", AnalyticsEndpoints.GetAsync).RequireRateLimiting("analytics");
 app.MapGet("/api/transfer-reviews/{id}", TransferReviewEndpoints.GetAsync).RequireRateLimiting("transfer-review");
 app.MapPost("/api/transfer-reviews/{id}/opened", DemoEndpoints.NotifyTransferReviewOpenedAsync).RequireRateLimiting("transfer-review");
-app.MapPost("/api/transfer-reviews/{id}/confirmed", DemoEndpoints.NotifyTransferReviewConfirmedAsync).RequireRateLimiting("transfer-review");
 app.MapGet("/health", () => Results.Ok(new { status = "ok" }));
 app.MapGet("/webhooks/whatsapp", WebhookEndpoints.VerifyAsync);
 app.MapPost("/webhooks/whatsapp", WebhookEndpoints.ReceiveAsync);
