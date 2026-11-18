@@ -273,6 +273,21 @@ public sealed class ConversationStore(IOptions<RePayOptions> options, IHostEnvir
         catch { gate.Release(); throw; }
     }
 
+    // Recipient display names are only trusted when they belong to an existing
+    // RePay account in the durable user store. A number alone remains valid.
+    public async Task<string?> GetRegisteredNameAsync(string phone, CancellationToken ct)
+    {
+        await using var db = CreateConnection();
+        await db.OpenAsync(ct);
+        await using var cmd = db.CreateCommand();
+        cmd.CommandText = "SELECT state FROM repay_conversations WHERE phone=@phone";
+        Add(cmd, "phone", phone);
+        var raw = await cmd.ExecuteScalarAsync(ct) as string;
+        if (raw is null) return null;
+        var state = JsonSerializer.Deserialize<ConversationState>(raw);
+        return string.IsNullOrWhiteSpace(state?.Name) ? null : state.Name.Trim();
+    }
+
     private async Task SaveAsync(string phone, ConversationState state, CancellationToken ct)
     {
         await using var db = CreateConnection();
