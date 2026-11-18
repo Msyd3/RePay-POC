@@ -15,6 +15,6 @@ public static class TransferReviewEndpoints
         return Results.Ok(masked);
     }
 
-    private static string MaskName(string name) => string.Join(' ', name.Split(' ', StringSplitOptions.RemoveEmptyEntries)
+    private static string? MaskName(string? name) => string.IsNullOrWhiteSpace(name) ? null : string.Join(' ', name.Split(' ', StringSplitOptions.RemoveEmptyEntries)
         .Select(part => part.Length <= 1 ? part + "***" : part[..1] + new string('*', Math.Min(part.Length - 1, 8))));
 }
