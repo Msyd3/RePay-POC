@@ -57,15 +57,18 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
                 {
                     var draft = state.Transfer;
                     if (draft is null || draft.ReviewId != reviewId || draft.Amount is null
-                        || draft.RecipientName is null || draft.RecipientPhone is null || draft.ReviewExpiresAt is null
-                        || state.Name is null)
+                        || draft.RecipientPhone is null || draft.ReviewExpiresAt is null || state.Name is null)
                         throw new InvalidOperationException("Transfer review is missing required summary data.");
+                    // A mobile number is enough to identify the recipient. A name is optional
+                    // when the customer starts the chat by sending a number directly.
+                    var recipientName = draft.RecipientName
+                        ?? (state.Language == "en" ? "Mobile number" : "رقم الجوال");
                     var review = new TransferReview(
                         reviewId,
                         "pending",
                         "RePay",
                         new TransferReviewPerson(message.Phone, null, state.Name, message.Phone),
-                        new TransferReviewPerson(draft.RecipientPhone, null, draft.RecipientName, draft.RecipientPhone),
+                        new TransferReviewPerson(draft.RecipientPhone, null, recipientName, draft.RecipientPhone),
                         checked((int)(draft.Amount.Value * 100m)),
                         "SAR",
                         draft.Note);
