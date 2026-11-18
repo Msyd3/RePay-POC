@@ -59,10 +59,9 @@ public sealed class WhatsAppOrchestrator(MetaWhatsAppClient whatsapp, AgentRoute
                     if (draft is null || draft.ReviewId != reviewId || draft.Amount is null
                         || draft.RecipientPhone is null || draft.ReviewExpiresAt is null || state.Name is null)
                         throw new InvalidOperationException("Transfer review is missing required summary data.");
-                    // A mobile number is enough to identify the recipient. A name is optional
-                    // when the customer starts the chat by sending a number directly.
-                    var recipientName = draft.RecipientName
-                        ?? (state.Language == "en" ? "Mobile number" : "رقم الجوال");
+                    // Never trust a typed contact name for the wallet summary. Display it
+                    // only when the recipient has a registered RePay profile in the durable store.
+                    var recipientName = await store.GetRegisteredNameAsync(draft.RecipientPhone, ct);
                     var review = new TransferReview(
                         reviewId,
                         "pending",
